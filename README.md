@@ -12,7 +12,7 @@ Phase 3 includes email/password auth, a manual finance engine, dashboard calcula
 - Package name: `com.musab.niqdah`
 - Firebase Authentication for email/password auth
 - Firestore persistence for profile, budgets, transactions, goals, debt, and monthly snapshots
-- Firebase Cloud Functions callable backend for AI Chat
+- Firebase Cloud Functions HTTPS backend for AI Chat
 - OpenAI Responses API from the backend only
 
 ## Firebase Setup
@@ -31,7 +31,7 @@ Without `app/google-services.json`, the project can still open and sync, but the
 
 ## Cloud Functions And AI Setup
 
-The Android app does not contain an OpenAI API key and does not call OpenAI directly. It calls the Firebase callable function `askNiqdah` in `us-central1`. The function reads `OPENAI_API_KEY` from Firebase Secret Manager and then calls the OpenAI Responses API.
+The Android app does not contain an OpenAI API key and does not call OpenAI directly. It force-refreshes the signed-in user's Firebase ID token, then calls the HTTPS function `askNiqdahHttp` in `us-central1` with `Authorization: Bearer <Firebase ID token>`. The function verifies the token with Firebase Admin, reads `OPENAI_API_KEY` from Firebase Secret Manager, and then calls the OpenAI Responses API.
 
 Prerequisites:
 
@@ -77,9 +77,10 @@ Android call path:
 ```text
 AI Chat screen
   -> FirebaseAiChatRepository
-  -> FirebaseFunctions.getInstance("us-central1")
-  -> getHttpsCallable("askNiqdah")
-  -> Firebase Cloud Function
+  -> FirebaseAuth.currentUser.getIdToken(true)
+  -> HTTPS POST https://us-central1-niqdah.cloudfunctions.net/askNiqdahHttp
+  -> Authorization: Bearer <Firebase ID token>
+  -> Firebase Admin verifyIdToken
   -> OpenAI Responses API
 ```
 

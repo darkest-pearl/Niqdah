@@ -28,3 +28,13 @@ interface AiChatRepository {
         context: AiFinanceContext
     ): Result<String>
 }
+
+class AiChatAuthRequiredException(message: String) : Exception(message)
+
+class AiChatBackendUnauthenticatedException : Exception(
+    "Your login session was not attached to the AI request. Please log out and log in again."
+)
+
+class AiChatTokenVerificationException : Exception(
+    "Your login token could not be verified. Please log out and log in again."
+)

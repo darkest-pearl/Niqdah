@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.musab.niqdah.domain.ai.AiChatMessage
 import com.musab.niqdah.domain.ai.AiChatRepository
 import com.musab.niqdah.domain.ai.AiChatRole
+import com.musab.niqdah.domain.ai.AiChatBackendUnauthenticatedException
+import com.musab.niqdah.domain.ai.AiChatTokenVerificationException
 import com.musab.niqdah.domain.ai.AiFinanceContext
 import com.musab.niqdah.ui.finance.FinanceUiState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -93,8 +95,14 @@ class AiChatViewModel(
     }
 
     private fun Throwable.friendlyChatMessage(): String =
-        message?.takeIf { it.isNotBlank() }
-            ?: "Niqdah AI is unavailable right now. Try again shortly."
+        when (this) {
+            is AiChatBackendUnauthenticatedException ->
+                "Your login session was not attached to the AI request. Please log out and log in again."
+            is AiChatTokenVerificationException ->
+                "Your login token could not be verified. Please log out and log in again."
+            else -> message?.takeIf { it.isNotBlank() }
+                ?: "Niqdah AI is unavailable right now. Try again shortly."
+        }
 
     class Factory(
         private val repository: AiChatRepository

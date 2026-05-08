@@ -1,7 +1,13 @@
 import OpenAI from "openai";
+import {getApps, initializeApp} from "firebase-admin/app";
+import {getAuth} from "firebase-admin/auth";
 import {logger} from "firebase-functions";
 import {defineSecret} from "firebase-functions/params";
-import {HttpsError, onCall} from "firebase-functions/v2/https";
+import {HttpsError, onCall, onRequest} from "firebase-functions/v2/https";
+
+if (getApps().length === 0) {
+  initializeApp();
+}
 
 const openAiApiKey = defineSecret("OPENAI_API_KEY");
 const DEFAULT_MODEL = "gpt-5.2";
@@ -14,6 +20,12 @@ type ChatRole = "user" | "assistant";
 type ChatMessage = {
   role: ChatRole;
   content: string;
+};
+
+type NiqdahResponse = {
+  reply: string;
+  classification: string | null;
+  model: string;
 };
 
 const systemPrompt = `
@@ -47,6 +59,10 @@ export const askNiqdah = onCall(
   },
   async (request) => {
     const uid = request.auth?.uid;
+    logger.info("askNiqdah auth check", {
+      hasAuth: Boolean(request.auth),
+      uid: uid ?? null,
+    });
     if (!uid) {
       throw new HttpsError("unauthenticated", "Sign in before chatting with Niqdah.");
     }
@@ -58,37 +74,9 @@ export const askNiqdah = onCall(
 
     const financeContext = trimForPrompt(request.data?.financeContext, MAX_CONTEXT_LENGTH);
     const history = readHistory(request.data?.history);
-    const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
-    const client = new OpenAI({apiKey: openAiApiKey.value()});
 
     try {
-      const response = await client.responses.create({
-        model,
-        instructions: systemPrompt,
-        input: [
-          {
-            role: "user",
-            content: `Current finance context for Firebase UID ${uid}:\n${financeContext}`,
-          },
-          ...history,
-          {
-            role: "user",
-            content: message,
-          },
-        ],
-        max_output_tokens: 500,
-      });
-
-      const reply = response.output_text?.trim();
-      if (!reply) {
-        throw new Error("OpenAI response did not include output text.");
-      }
-
-      return {
-        reply,
-        classification: extractClassification(reply),
-        model,
-      };
+      return await generateNiqdahReply(uid, message, financeContext, history);
     } catch (error) {
       logger.error("askNiqdah failed", {
         uid,
@@ -101,6 +89,126 @@ export const askNiqdah = onCall(
     }
   }
 );
+
+export const askNiqdahHttp = onRequest(
+  {
+    region: "us-central1",
+    secrets: [openAiApiKey],
+    timeoutSeconds: 60,
+    memory: "256MiB",
+    cors: true,
+  },
+  async (request, response) => {
+    setJsonCorsHeaders(response);
+
+    if (request.method === "OPTIONS") {
+      response.status(204).send("");
+      return;
+    }
+
+    if (request.method !== "POST") {
+      response.status(405).json({
+        error: "Use POST to chat with Niqdah.",
+      });
+      return;
+    }
+
+    const authHeader = request.header("authorization") || "";
+    logger.info("askNiqdahHttp auth header check", {
+      hasAuthHeader: authHeader.toLowerCase().startsWith("bearer "),
+    });
+
+    const idToken = extractBearerToken(authHeader);
+    if (!idToken) {
+      response.status(401).json({
+        error: "Missing authentication token. Please log in again before using AI Chat.",
+      });
+      return;
+    }
+
+    let uid: string;
+    try {
+      const decodedToken = await getAuth().verifyIdToken(idToken);
+      uid = decodedToken.uid;
+      logger.info("askNiqdahHttp token verified", {
+        hasAuthHeader: true,
+        uid,
+      });
+    } catch (error) {
+      logger.warn("askNiqdahHttp token verification failed", {
+        hasAuthHeader: true,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      response.status(401).json({
+        error: "Your login token could not be verified. Please log out and log in again.",
+      });
+      return;
+    }
+
+    const body = readBody(request.body);
+    const message = readString(body.message, MAX_MESSAGE_LENGTH);
+    if (!message) {
+      response.status(400).json({
+        error: "Send a message for Niqdah to answer.",
+      });
+      return;
+    }
+
+    const financeContext = trimForPrompt(body.financeContext, MAX_CONTEXT_LENGTH);
+    const history = readHistory(body.history);
+
+    try {
+      const reply = await generateNiqdahReply(uid, message, financeContext, history);
+      response.status(200).json(reply);
+    } catch (error) {
+      logger.error("askNiqdahHttp failed", {
+        uid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      response.status(503).json({
+        error: "Niqdah AI is unavailable right now. Try again shortly.",
+      });
+    }
+  }
+);
+
+async function generateNiqdahReply(
+  uid: string,
+  message: string,
+  financeContext: string,
+  history: ChatMessage[]
+): Promise<NiqdahResponse> {
+  const model = process.env.OPENAI_MODEL || DEFAULT_MODEL;
+  const client = new OpenAI({apiKey: openAiApiKey.value()});
+
+  const openAiResponse = await client.responses.create({
+    model,
+    instructions: systemPrompt,
+    input: [
+      {
+        role: "user",
+        content: `Current finance context for Firebase UID ${uid}:\n${financeContext}`,
+      },
+      ...history,
+      {
+        role: "user",
+        content: message,
+      },
+    ],
+    max_output_tokens: 500,
+  });
+
+  const reply = openAiResponse.output_text?.trim();
+  if (!reply) {
+    throw new Error("OpenAI response did not include output text.");
+  }
+
+  return {
+    reply,
+    classification: extractClassification(reply),
+    model,
+  };
+}
 
 function readString(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -130,4 +238,39 @@ function trimForPrompt(value: unknown, maxLength: number): string {
 function extractClassification(reply: string): string | null {
   const match = reply.match(/Classification:\s*(Necessary|Optional|Avoid)/i);
   return match?.[1] ?? null;
+}
+
+function extractBearerToken(authHeader: string): string {
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() ?? "";
+}
+
+function readBody(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    return parseJsonBody(value);
+  }
+  if (Buffer.isBuffer(value)) {
+    return parseJsonBody(value.toString("utf8"));
+  }
+  if (typeof value === "object") {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function parseJsonBody(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function setJsonCorsHeaders(response: {set: (field: string, value: string) => void}): void {
+  response.set("Access-Control-Allow-Origin", "*");
+  response.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+  response.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  response.set("Content-Type", "application/json");
 }
