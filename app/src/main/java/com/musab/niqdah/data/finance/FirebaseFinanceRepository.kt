@@ -8,6 +8,8 @@ import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.musab.niqdah.core.firebase.FirebaseProvider
 import com.musab.niqdah.data.firestore.FirestoreCollections
+import com.musab.niqdah.domain.finance.BankMessageParserSettings
+import com.musab.niqdah.domain.finance.BankMessageSourceSettings
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.CategoryType
 import com.musab.niqdah.domain.finance.DebtTracker
@@ -15,6 +17,7 @@ import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.FinanceData
 import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.FinanceRepository
+import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.MonthlySnapshot
 import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.SavingsGoal
@@ -43,11 +46,15 @@ class FirebaseFinanceRepository(
             profileDocument(db).set(FinanceDefaults.userProfile(uid, now).toFirestore()).awaitValue()
         }
 
-        if (categoriesCollection(db).get().awaitValue().isEmpty) {
-            FinanceDefaults.budgetCategories(now).forEach { category ->
+        val existingCategoryIds = categoriesCollection(db).get().awaitValue()
+            .documents
+            .map { it.id }
+            .toSet()
+        FinanceDefaults.budgetCategories(now)
+            .filterNot { it.id in existingCategoryIds }
+            .forEach { category ->
                 categoriesCollection(db).document(category.id).set(category.toFirestore()).awaitValue()
             }
-        }
 
         if (goalsCollection(db).get().awaitValue().isEmpty) {
             FinanceDefaults.savingsGoals(now).forEach { goal ->
@@ -58,24 +65,45 @@ class FirebaseFinanceRepository(
         if (!debtDocument(db).get().awaitValue().exists()) {
             debtDocument(db).set(FinanceDefaults.debtTracker(now).toFirestore()).awaitValue()
         }
+
+        if (!bankMessageSettingsDocument(db).get().awaitValue().exists()) {
+            bankMessageSettingsDocument(db)
+                .set(FinanceDefaults.bankMessageParserSettings().toFirestore())
+                .awaitValue()
+        }
     }
 
     override fun observeFinanceData(): Flow<FinanceData> {
         val db = firestore ?: return flowOf(FinanceData.empty(uid))
 
-        return combine(
+        val coreFlow = combine(
             observeProfile(db),
             observeCategories(db),
             observeTransactions(db),
-            observeGoals(db),
-            observeDebt(db)
-        ) { profile, categories, transactions, goals, debt ->
-            FinanceData(
+            observeIncomeTransactions(db)
+        ) { profile, categories, transactions, incomeTransactions ->
+            FinanceCore(
                 profile = profile,
                 categories = categories.ifEmpty { FinanceDefaults.budgetCategories() },
                 transactions = transactions,
+                incomeTransactions = incomeTransactions
+            )
+        }
+
+        return combine(
+            coreFlow,
+            observeGoals(db),
+            observeDebt(db),
+            observeBankMessageSettings(db)
+        ) { core, goals, debt, bankMessageSettings ->
+            FinanceData(
+                profile = core.profile,
+                categories = core.categories,
+                transactions = core.transactions,
+                incomeTransactions = core.incomeTransactions,
                 goals = goals.ifEmpty { FinanceDefaults.savingsGoals() },
-                debt = debt
+                debt = debt,
+                bankMessageSettings = bankMessageSettings
             )
         }
     }
@@ -99,12 +127,27 @@ class FirebaseFinanceRepository(
         transactionsCollection(requireFirestore()).document(transactionId).delete().awaitValue()
     }
 
+    override suspend fun upsertIncomeTransaction(transaction: IncomeTransaction) {
+        incomeTransactionsCollection(requireFirestore())
+            .document(transaction.id)
+            .set(transaction.toFirestore())
+            .awaitValue()
+    }
+
+    override suspend fun deleteIncomeTransaction(transactionId: String) {
+        incomeTransactionsCollection(requireFirestore()).document(transactionId).delete().awaitValue()
+    }
+
     override suspend fun upsertGoal(goal: SavingsGoal) {
         goalsCollection(requireFirestore()).document(goal.id).set(goal.toFirestore()).awaitValue()
     }
 
     override suspend fun upsertDebt(debt: DebtTracker) {
         debtDocument(requireFirestore()).set(debt.toFirestore()).awaitValue()
+    }
+
+    override suspend fun upsertBankMessageSettings(settings: BankMessageParserSettings) {
+        bankMessageSettingsDocument(requireFirestore()).set(settings.toFirestore()).awaitValue()
     }
 
     override suspend fun saveMonthlySnapshot(snapshot: MonthlySnapshot) {
@@ -158,6 +201,22 @@ class FirebaseFinanceRepository(
             awaitClose { registration.remove() }
         }
 
+    private fun observeIncomeTransactions(db: FirebaseFirestore): Flow<List<IncomeTransaction>> =
+        callbackFlow {
+            val registration = incomeTransactionsCollection(db).addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val transactions = snapshot?.documents
+                    ?.map { it.toIncomeTransaction() }
+                    ?.sortedByDescending { it.occurredAtMillis }
+                    ?: emptyList()
+                trySend(transactions)
+            }
+            awaitClose { registration.remove() }
+        }
+
     private fun observeGoals(db: FirebaseFirestore): Flow<List<SavingsGoal>> =
         callbackFlow {
             val registration = goalsCollection(db).addSnapshotListener { snapshot, error ->
@@ -187,6 +246,18 @@ class FirebaseFinanceRepository(
             awaitClose { registration.remove() }
         }
 
+    private fun observeBankMessageSettings(db: FirebaseFirestore): Flow<BankMessageParserSettings> =
+        callbackFlow {
+            val registration = bankMessageSettingsDocument(db).addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                trySend(snapshot?.toBankMessageParserSettings() ?: FinanceDefaults.bankMessageParserSettings())
+            }
+            awaitClose { registration.remove() }
+        }
+
     private fun userDocument(db: FirebaseFirestore): DocumentReference =
         db.collection(FirestoreCollections.USERS).document(uid)
 
@@ -199,11 +270,17 @@ class FirebaseFinanceRepository(
     private fun debtDocument(db: FirebaseFirestore): DocumentReference =
         financeCollection(db).document("debt")
 
+    private fun bankMessageSettingsDocument(db: FirebaseFirestore): DocumentReference =
+        financeCollection(db).document("bankMessageSettings")
+
     private fun categoriesCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.BUDGET_CATEGORIES)
 
     private fun transactionsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.TRANSACTIONS)
+
+    private fun incomeTransactionsCollection(db: FirebaseFirestore): CollectionReference =
+        userDocument(db).collection(FirestoreCollections.INCOME_TRANSACTIONS)
 
     private fun goalsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.SAVINGS_GOALS)
@@ -252,8 +329,21 @@ class FirebaseFinanceRepository(
         mapOf(
             "categoryId" to categoryId,
             "amount" to amount,
+            "currency" to currency,
             "note" to note,
             "necessity" to necessity.name,
+            "occurredAtMillis" to occurredAtMillis,
+            "yearMonth" to yearMonth,
+            "createdAtMillis" to createdAtMillis,
+            "updatedAtMillis" to updatedAtMillis
+        )
+
+    private fun IncomeTransaction.toFirestore(): Map<String, Any> =
+        mapOf(
+            "amount" to amount,
+            "currency" to currency,
+            "source" to source,
+            "note" to note,
             "occurredAtMillis" to occurredAtMillis,
             "yearMonth" to yearMonth,
             "createdAtMillis" to createdAtMillis,
@@ -291,6 +381,21 @@ class FirebaseFinanceRepository(
             "generatedAtMillis" to generatedAtMillis
         )
 
+    private fun BankMessageParserSettings.toFirestore(): Map<String, Any> =
+        mapOf(
+            "dailyUseSource" to dailyUseSource.toFirestore(),
+            "savingsSource" to savingsSource.toFirestore(),
+            "debitKeywords" to debitKeywords,
+            "creditKeywords" to creditKeywords,
+            "savingsTransferKeywords" to savingsTransferKeywords
+        )
+
+    private fun BankMessageSourceSettings.toFirestore(): Map<String, Any> =
+        mapOf(
+            "senderName" to senderName,
+            "isEnabled" to isEnabled
+        )
+
     private fun DocumentSnapshot.toUserProfile(uid: String): UserProfile =
         UserProfile(
             uid = getString("uid") ?: uid,
@@ -317,8 +422,22 @@ class FirebaseFinanceRepository(
             id = id,
             categoryId = getString("categoryId") ?: "",
             amount = double("amount"),
+            currency = getString("currency") ?: "",
             note = getString("note") ?: "",
             necessity = necessityLevel(getString("necessity")),
+            occurredAtMillis = long("occurredAtMillis"),
+            yearMonth = getString("yearMonth") ?: "",
+            createdAtMillis = long("createdAtMillis"),
+            updatedAtMillis = long("updatedAtMillis")
+        )
+
+    private fun DocumentSnapshot.toIncomeTransaction(): IncomeTransaction =
+        IncomeTransaction(
+            id = id,
+            amount = double("amount"),
+            currency = getString("currency") ?: "",
+            source = getString("source") ?: "",
+            note = getString("note") ?: "",
             occurredAtMillis = long("occurredAtMillis"),
             yearMonth = getString("yearMonth") ?: "",
             createdAtMillis = long("createdAtMillis"),
@@ -343,11 +462,46 @@ class FirebaseFinanceRepository(
             updatedAtMillis = long("updatedAtMillis")
         )
 
+    @Suppress("UNCHECKED_CAST")
+    private fun DocumentSnapshot.toBankMessageParserSettings(): BankMessageParserSettings {
+        val defaults = FinanceDefaults.bankMessageParserSettings()
+        return BankMessageParserSettings(
+            dailyUseSource = sourceSettings(
+                value = get("dailyUseSource") as? Map<String, Any>,
+                default = defaults.dailyUseSource
+            ),
+            savingsSource = sourceSettings(
+                value = get("savingsSource") as? Map<String, Any>,
+                default = defaults.savingsSource
+            ),
+            debitKeywords = stringList("debitKeywords", defaults.debitKeywords),
+            creditKeywords = stringList("creditKeywords", defaults.creditKeywords),
+            savingsTransferKeywords = stringList("savingsTransferKeywords", defaults.savingsTransferKeywords)
+        )
+    }
+
     private fun DocumentSnapshot.double(field: String, default: Double = 0.0): Double =
         (get(field) as? Number)?.toDouble() ?: default
 
     private fun DocumentSnapshot.long(field: String, default: Long = 0L): Long =
         (get(field) as? Number)?.toLong() ?: default
+
+    private fun DocumentSnapshot.stringList(field: String, default: List<String>): List<String> =
+        (get(field) as? List<*>)
+            ?.mapNotNull { it as? String }
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?.takeIf { it.isNotEmpty() }
+            ?: default
+
+    private fun sourceSettings(
+        value: Map<String, Any>?,
+        default: BankMessageSourceSettings
+    ): BankMessageSourceSettings =
+        BankMessageSourceSettings(
+            senderName = value?.get("senderName") as? String ?: default.senderName,
+            isEnabled = value?.get("isEnabled") as? Boolean ?: default.isEnabled
+        )
 
     private fun categoryType(value: String?): CategoryType =
         CategoryType.entries.firstOrNull { it.name == value } ?: CategoryType.VARIABLE
@@ -355,3 +509,10 @@ class FirebaseFinanceRepository(
     private fun necessityLevel(value: String?): NecessityLevel =
         NecessityLevel.entries.firstOrNull { it.name == value } ?: NecessityLevel.NECESSARY
 }
+
+private data class FinanceCore(
+    val profile: UserProfile,
+    val categories: List<BudgetCategory>,
+    val transactions: List<ExpenseTransaction>,
+    val incomeTransactions: List<IncomeTransaction>
+)

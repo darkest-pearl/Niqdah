@@ -5,6 +5,7 @@ object FirestoreCollections {
     const val FINANCE = "finance"
     const val BUDGET_CATEGORIES = "budgetCategories"
     const val TRANSACTIONS = "transactions"
+    const val INCOME_TRANSACTIONS = "incomeTransactions"
     const val SAVINGS_GOALS = "savingsGoals"
     const val MONTHLY_SNAPSHOTS = "monthlySnapshots"
     const val CHAT_SESSIONS = "chatSessions"

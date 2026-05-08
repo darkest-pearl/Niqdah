@@ -12,9 +12,13 @@ Add manual transaction entry, categories, fixed expense setup, dashboard calcula
 
 Add a backend-backed AI chat experience that can help set budgets, classify expenses, and reason about purchases against the user's plan. The Android app calls Firebase Cloud Functions, and the Cloud Function calls the OpenAI Responses API using a secret-backed `OPENAI_API_KEY`. Complete for the first secure chat version.
 
-## Phase 4 SMS/Import Parser
+## Phase 4A Manual Import Parser
 
-Add opt-in SMS or statement import parsing after the finance model is stable. No SMS permissions are part of Phase 1.
+Add manual copy-paste bank message parsing with source settings, editable preview, expense/income records, and savings transfer contribution updates. Complete for manual import without SMS permissions.
+
+## Phase 4B Automatic Import
+
+Add opt-in SMS or notification import after the manual parser proves stable. This is the first phase that should consider Android SMS or notification-listener permissions.
 
 ## Phase 5 Reminders
 

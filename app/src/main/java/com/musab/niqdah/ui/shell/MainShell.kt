@@ -104,6 +104,9 @@ fun MainShell(
                 padding = padding,
                 onSaveTransaction = financeViewModel::saveTransaction,
                 onDeleteTransaction = financeViewModel::deleteTransaction,
+                onDeleteIncomeTransaction = financeViewModel::deleteIncomeTransaction,
+                onPreviewBankMessage = financeViewModel::previewBankMessage,
+                onSaveImportedBankMessage = financeViewModel::saveImportedBankMessage,
                 onMonthSelected = financeViewModel::setTransactionMonth,
                 onCategoryFilterSelected = financeViewModel::setTransactionCategoryFilter,
                 onClearError = financeViewModel::clearError
@@ -128,6 +131,7 @@ fun MainShell(
                 padding = padding,
                 onUpdateProfileAndDebt = financeViewModel::updateProfileAndDebt,
                 onUpdateCategoryBudgets = financeViewModel::updateCategoryBudgets,
+                onUpdateBankMessageSettings = financeViewModel::updateBankMessageSettings,
                 onLogout = onLogout,
                 onClearError = financeViewModel::clearError
             )

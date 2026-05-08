@@ -13,6 +13,7 @@ import com.musab.niqdah.domain.ai.AiChatTokenVerificationException
 import com.musab.niqdah.domain.ai.AiFinanceContext
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.ExpenseTransaction
+import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.SavingsGoal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -151,6 +152,10 @@ class FirebaseAiChatRepository(context: Context) : AiChatRepository {
             .sortedByDescending { it.occurredAtMillis }
             .take(recentTransactionLimit)
             .map { it.toPayload(categoryById[it.categoryId]?.name ?: "Uncategorized") }
+        val recentIncomeTransactions = data.incomeTransactions
+            .sortedByDescending { it.occurredAtMillis }
+            .take(recentTransactionLimit)
+            .map { it.toPayload() }
 
         return mapOf(
             "profile" to mapOf(
@@ -177,7 +182,8 @@ class FirebaseAiChatRepository(context: Context) : AiChatRepository {
             ),
             "categoryBudgets" to data.categories.map { it.toPayload() },
             "savingsGoals" to data.goals.map { it.toPayload() },
-            "recentTransactions" to recentTransactions
+            "recentTransactions" to recentTransactions,
+            "recentIncomeTransactions" to recentIncomeTransactions
         )
     }
 
@@ -204,6 +210,16 @@ class FirebaseAiChatRepository(context: Context) : AiChatRepository {
             "amount" to amount,
             "note" to note,
             "necessity" to necessity.label,
+            "yearMonth" to yearMonth,
+            "occurredAtMillis" to occurredAtMillis
+        )
+
+    private fun IncomeTransaction.toPayload(): Map<String, Any> =
+        mapOf(
+            "amount" to amount,
+            "currency" to currency,
+            "source" to source,
+            "note" to note,
             "yearMonth" to yearMonth,
             "occurredAtMillis" to occurredAtMillis
         )

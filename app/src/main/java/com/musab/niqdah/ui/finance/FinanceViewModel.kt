@@ -3,6 +3,9 @@ package com.musab.niqdah.ui.finance
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.musab.niqdah.domain.finance.BankMessageParser
+import com.musab.niqdah.domain.finance.BankMessageParserSettings
+import com.musab.niqdah.domain.finance.BankMessageSourceSettings
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.DashboardMetrics
 import com.musab.niqdah.domain.finance.DebtTracker
@@ -10,13 +13,18 @@ import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.FinanceCalculator
 import com.musab.niqdah.domain.finance.FinanceData
 import com.musab.niqdah.domain.finance.FinanceDates
+import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.FinanceRepository
+import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.NecessityLevel
+import com.musab.niqdah.domain.finance.ParsedBankMessage
+import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.SavingsGoal
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.Locale
 import java.util.UUID
 
 data class FinanceUiState(
@@ -34,8 +42,19 @@ data class FinanceUiState(
                 (selectedTransactionCategoryId == null || transaction.categoryId == selectedTransactionCategoryId)
         }
 
+    val filteredIncomeTransactions: List<IncomeTransaction>
+        get() = if (selectedTransactionCategoryId == null) {
+            data.incomeTransactions.filter { transaction -> transaction.yearMonth == selectedTransactionMonth }
+        } else {
+            emptyList()
+        }
+
     val availableMonths: List<String>
-        get() = (data.transactions.map { it.yearMonth } + FinanceDates.currentYearMonth())
+        get() = (
+            data.transactions.map { it.yearMonth } +
+                data.incomeTransactions.map { it.yearMonth } +
+                FinanceDates.currentYearMonth()
+            )
             .filter { it.isNotBlank() }
             .distinct()
             .sortedDescending()
@@ -45,6 +64,7 @@ class FinanceViewModel(
     private val financeRepository: FinanceRepository
 ) : ViewModel() {
     private val dashboardMonth = FinanceDates.currentYearMonth()
+    private val bankMessageParser = BankMessageParser()
     private val _uiState = MutableStateFlow(FinanceUiState())
     val uiState = _uiState.asStateFlow()
 
@@ -116,6 +136,8 @@ class FinanceViewModel(
             id = existing?.id ?: UUID.randomUUID().toString(),
             categoryId = categoryId,
             amount = parsedAmount,
+            currency = existing?.currency?.ifBlank { _uiState.value.data.profile.currency }
+                ?: _uiState.value.data.profile.currency,
             note = note.trim(),
             necessity = necessity,
             occurredAtMillis = parsedOccurredAt,
@@ -129,6 +151,96 @@ class FinanceViewModel(
 
     fun deleteTransaction(transactionId: String) {
         runSave { financeRepository.deleteTransaction(transactionId) }
+    }
+
+    fun deleteIncomeTransaction(transactionId: String) {
+        runSave { financeRepository.deleteIncomeTransaction(transactionId) }
+    }
+
+    fun previewBankMessage(senderInput: String, messageInput: String): ParsedBankMessage {
+        val state = _uiState.value
+        return bankMessageParser.parse(
+            rawMessage = messageInput,
+            manualSenderName = senderInput,
+            settings = state.data.bankMessageSettings,
+            categories = state.data.categories
+        )
+    }
+
+    fun saveImportedBankMessage(
+        type: ParsedBankMessageType,
+        amountInput: String,
+        currencyInput: String,
+        categoryId: String?,
+        description: String,
+        necessity: NecessityLevel,
+        dateInput: String,
+        senderName: String
+    ) {
+        val amount = amountInput.toMoneyOrNull()
+        val occurredAt = FinanceDates.parseDateInput(dateInput)
+        val currency = currencyInput.trim().uppercase(Locale.US).ifBlank { _uiState.value.data.profile.currency }
+        val validationError = when {
+            type == ParsedBankMessageType.UNKNOWN -> "Choose a message type before saving."
+            amount == null || amount <= 0.0 -> "Enter a valid imported amount."
+            occurredAt == null -> "Enter the import date as YYYY-MM-DD."
+            type == ParsedBankMessageType.EXPENSE && categoryId.isNullOrBlank() -> "Choose a category."
+            else -> null
+        }
+
+        if (validationError != null) {
+            _uiState.update { it.copy(errorMessage = validationError) }
+            return
+        }
+
+        val parsedAmount = amount ?: return
+        val parsedOccurredAt = occurredAt ?: return
+        val now = System.currentTimeMillis()
+        runSave {
+            when (type) {
+                ParsedBankMessageType.EXPENSE -> {
+                    financeRepository.upsertTransaction(
+                        ExpenseTransaction(
+                            id = UUID.randomUUID().toString(),
+                            categoryId = categoryId.orEmpty(),
+                            amount = parsedAmount,
+                            currency = currency,
+                            note = description.trim(),
+                            necessity = necessity,
+                            occurredAtMillis = parsedOccurredAt,
+                            yearMonth = FinanceDates.yearMonthFromMillis(parsedOccurredAt),
+                            createdAtMillis = now,
+                            updatedAtMillis = now
+                        )
+                    )
+                }
+                ParsedBankMessageType.INCOME -> {
+                    financeRepository.upsertIncomeTransaction(
+                        IncomeTransaction(
+                            id = UUID.randomUUID().toString(),
+                            amount = parsedAmount,
+                            currency = currency,
+                            source = senderName.trim(),
+                            note = description.trim(),
+                            occurredAtMillis = parsedOccurredAt,
+                            yearMonth = FinanceDates.yearMonthFromMillis(parsedOccurredAt),
+                            createdAtMillis = now,
+                            updatedAtMillis = now
+                        )
+                    )
+                }
+                ParsedBankMessageType.SAVINGS_TRANSFER -> {
+                    saveSavingsContribution(
+                        amount = parsedAmount,
+                        currency = currency,
+                        description = description,
+                        occurredAtMillis = parsedOccurredAt,
+                        now = now
+                    )
+                }
+                ParsedBankMessageType.UNKNOWN -> Unit
+            }
+        }
     }
 
     fun updateGoalSavedAmount(goal: SavingsGoal, savedAmountInput: String) {
@@ -206,7 +318,7 @@ class FinanceViewModel(
             salary = parsedSalary,
             extraIncome = parsedExtraIncome,
             monthlySavingsTarget = parsedSavingsTarget,
-            currency = currencyInput.trim().uppercase(),
+            currency = currencyInput.trim().uppercase(Locale.US),
             updatedAtMillis = now
         )
         val debt = DebtTracker(
@@ -238,6 +350,78 @@ class FinanceViewModel(
         }
     }
 
+    fun updateBankMessageSettings(
+        dailySenderName: String,
+        isDailyEnabled: Boolean,
+        savingsSenderName: String,
+        isSavingsEnabled: Boolean,
+        debitKeywordsInput: String,
+        creditKeywordsInput: String,
+        savingsTransferKeywordsInput: String
+    ) {
+        val settings = BankMessageParserSettings(
+            dailyUseSource = BankMessageSourceSettings(
+                senderName = dailySenderName.trim(),
+                isEnabled = isDailyEnabled
+            ),
+            savingsSource = BankMessageSourceSettings(
+                senderName = savingsSenderName.trim(),
+                isEnabled = isSavingsEnabled
+            ),
+            debitKeywords = keywordListOrDefault(
+                debitKeywordsInput,
+                FinanceDefaults.DEFAULT_DEBIT_KEYWORDS
+            ),
+            creditKeywords = keywordListOrDefault(
+                creditKeywordsInput,
+                FinanceDefaults.DEFAULT_CREDIT_KEYWORDS
+            ),
+            savingsTransferKeywords = keywordListOrDefault(
+                savingsTransferKeywordsInput,
+                FinanceDefaults.DEFAULT_SAVINGS_TRANSFER_KEYWORDS
+            )
+        )
+
+        runSave { financeRepository.upsertBankMessageSettings(settings) }
+    }
+
+    private suspend fun saveSavingsContribution(
+        amount: Double,
+        currency: String,
+        description: String,
+        occurredAtMillis: Long,
+        now: Long
+    ) {
+        val state = _uiState.value
+        val yearMonth = FinanceDates.yearMonthFromMillis(occurredAtMillis)
+        val existingContribution = state.data.transactions.firstOrNull {
+            it.id == savingsImportTransactionId(yearMonth)
+        }
+        financeRepository.upsertTransaction(
+            ExpenseTransaction(
+                id = existingContribution?.id ?: savingsImportTransactionId(yearMonth),
+                categoryId = FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID,
+                amount = (existingContribution?.amount ?: 0.0) + amount,
+                currency = currency,
+                note = description.trim().ifBlank { "Imported savings transfer" },
+                necessity = NecessityLevel.NECESSARY,
+                occurredAtMillis = existingContribution?.occurredAtMillis ?: occurredAtMillis,
+                yearMonth = yearMonth,
+                createdAtMillis = existingContribution?.createdAtMillis?.takeIf { it > 0L } ?: now,
+                updatedAtMillis = now
+            )
+        )
+
+        val marriageGoal = state.data.goals.firstOrNull { it.id == FinanceDefaults.MARRIAGE_GOAL_ID }
+            ?: FinanceDefaults.savingsGoals(now).first { it.id == FinanceDefaults.MARRIAGE_GOAL_ID }
+        financeRepository.upsertGoal(
+            marriageGoal.copy(
+                savedAmount = marriageGoal.savedAmount + amount,
+                updatedAtMillis = now
+            )
+        )
+    }
+
     private fun runSave(block: suspend () -> Unit) {
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true, errorMessage = null) }
@@ -251,6 +435,15 @@ class FinanceViewModel(
 
     private fun String.toMoneyOrNull(): Double? =
         trim().replace(",", "").toDoubleOrNull()
+
+    private fun keywordListOrDefault(input: String, default: List<String>): List<String> =
+        input.split(",")
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .ifEmpty { default }
+
+    private fun savingsImportTransactionId(yearMonth: String): String =
+        "bank-message-savings-$yearMonth"
 
     private fun Throwable.friendlyFinanceMessage(): String =
         message?.takeIf { it.isNotBlank() }

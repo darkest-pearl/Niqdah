@@ -2,7 +2,7 @@
 
 Niqdah is a personal Android finance app for disciplined budgeting and wedding preparation, built with Kotlin, Jetpack Compose, Material 3, Firebase Auth, Firestore, and Firebase Cloud Functions.
 
-Phase 3 includes email/password auth, a manual finance engine, dashboard calculations, transaction tracking, savings envelopes, debt tracking, editable settings, persistent Firestore data under each authenticated user, and a secure AI Chat backend.
+Phase 4A includes email/password auth, a manual finance engine, dashboard calculations, transaction tracking, savings envelopes, debt tracking, editable settings, persistent Firestore data under each authenticated user, a secure AI Chat backend, and manual bank message import from copy-pasted text.
 
 ## Tech Stack
 
@@ -93,13 +93,31 @@ Niqdah stores finance data under the authenticated Firebase user UID:
 ```text
 users/{uid}/finance/profile
 users/{uid}/finance/debt
+users/{uid}/finance/bankMessageSettings
 users/{uid}/budgetCategories/{categoryId}
 users/{uid}/transactions/{transactionId}
+users/{uid}/incomeTransactions/{transactionId}
 users/{uid}/savingsGoals/{goalId}
 users/{uid}/monthlySnapshots/{yearMonth}
 ```
 
 The first sign-in seeds the default salary, extra income, rent, food/transport budget, marriage savings target, debt tracker, and wedding-preparation envelopes.
+
+## Phase 4A Manual Bank Message Import
+
+Transactions now includes an **Import Message** section where the user manually pastes a bank SMS or bank-app message. Niqdah parses the pasted text locally in the app and shows an editable preview before saving.
+
+The parser can detect sender, source profile, amount, currency, debit/spending, credit/income, savings transfer, available balance, description or merchant text, and date when present. If a date is missing, the preview defaults to the current date.
+
+Settings includes **Bank Message Sources**:
+
+- Daily-use sender name and enable/disable toggle
+- Savings sender name and enable/disable toggle
+- Comma-separated debit, credit, and savings-transfer keywords
+
+Daily-use debit messages save as expense transactions. Category inference is rule-based and falls back to **Uncategorized**. Savings transfer messages update the current month imported savings contribution and the marriage fund saved amount, helping show progress toward the monthly 1,700 AED marriage savings target. Credit messages save as income transaction records and are included in dashboard monthly income.
+
+SMS permissions are intentionally not part of Phase 4A. The Android manifest still does **not** request `READ_SMS`, `RECEIVE_SMS`, or notification listener access. Future automatic SMS or notification import should call the same `BankMessageParser` domain service after an explicit opt-in phase.
 
 ## Open And Run In Android Studio
 
@@ -129,7 +147,7 @@ app/src/main/java/com/musab/niqdah/
   data/firestore/      Firestore collection names for future data work
   domain/ai/           AI chat models and repository contract
   domain/auth/         Auth repository contract and auth state
-  domain/finance/      Finance models, defaults, repository contract, dates, calculations
+  domain/finance/      Finance models, parser, defaults, repository contract, dates, calculations
   ui/ai/               AI Chat screen and ViewModel
   ui/auth/             Login and register screens
   ui/finance/          Dashboard, transactions, goals, settings, and shared finance UI
@@ -156,6 +174,10 @@ Included:
 - Monthly income setup
 - Fixed expenses and category budgets
 - Manual transaction add, edit, delete, note, month filter, category filter, and necessity level
+- Manual bank message import with parser preview and editable fields
+- Daily-use and savings bank message source settings
+- Rule-based category suggestions for pasted bank messages
+- Imported income records from credit messages
 - Marriage fund and wedding-preparation envelopes
 - Debt tracker and debt payment updates
 - Dashboard calculations for income, spending, safe-to-spend, savings, debt, overspending alerts, and health summary
@@ -166,6 +188,5 @@ Included:
 
 Not included yet:
 
-- SMS permissions or parsing
+- Automatic SMS permissions, SMS receivers, or notification listeners
 - Payment, bank, or card integrations
-- Notification listeners

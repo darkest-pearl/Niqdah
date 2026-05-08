@@ -59,7 +59,7 @@ fun DashboardScreen(
                 FinanceMetricCard(
                     title = "Total monthly income",
                     value = formatMoney(dashboard.totalMonthlyIncome, currency),
-                    subtitle = "Salary plus extra debt income."
+                    subtitle = "Profile income plus imported credits."
                 )
             }
             item {

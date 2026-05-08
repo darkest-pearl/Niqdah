@@ -3,6 +3,7 @@ package com.musab.niqdah.ui.finance
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -17,6 +18,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -24,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -38,6 +41,7 @@ fun SettingsScreen(
     padding: PaddingValues,
     onUpdateProfileAndDebt: (String, String, String, String, String, String) -> Unit,
     onUpdateCategoryBudgets: (Map<String, String>) -> Unit,
+    onUpdateBankMessageSettings: (String, Boolean, String, Boolean, String, String, String) -> Unit,
     onLogout: () -> Unit,
     onClearError: () -> Unit
 ) {
@@ -50,6 +54,13 @@ fun SettingsScreen(
     var startingDebt by remember { mutableStateOf("") }
     var remainingDebt by remember { mutableStateOf("") }
     var categoryBudgets by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var dailySenderName by remember { mutableStateOf("") }
+    var isDailyParserEnabled by remember { mutableStateOf(true) }
+    var savingsSenderName by remember { mutableStateOf("") }
+    var isSavingsParserEnabled by remember { mutableStateOf(true) }
+    var debitKeywords by remember { mutableStateOf("") }
+    var creditKeywords by remember { mutableStateOf("") }
+    var savingsTransferKeywords by remember { mutableStateOf("") }
 
     LaunchedEffect(profile, debt) {
         salary = formatInputMoney(profile.salary)
@@ -62,6 +73,17 @@ fun SettingsScreen(
 
     LaunchedEffect(uiState.data.categories) {
         categoryBudgets = uiState.data.categories.associate { it.id to formatInputMoney(it.monthlyBudget) }
+    }
+
+    LaunchedEffect(uiState.data.bankMessageSettings) {
+        val settings = uiState.data.bankMessageSettings
+        dailySenderName = settings.dailyUseSource.senderName
+        isDailyParserEnabled = settings.dailyUseSource.isEnabled
+        savingsSenderName = settings.savingsSource.senderName
+        isSavingsParserEnabled = settings.savingsSource.isEnabled
+        debitKeywords = settings.debitKeywords.joinToString(", ")
+        creditKeywords = settings.creditKeywords.joinToString(", ")
+        savingsTransferKeywords = settings.savingsTransferKeywords.joinToString(", ")
     }
 
     LazyColumn(
@@ -108,6 +130,36 @@ fun SettingsScreen(
                         currency,
                         startingDebt,
                         remainingDebt
+                    )
+                }
+            )
+        }
+        item {
+            BankMessageSourcesCard(
+                dailySenderName = dailySenderName,
+                onDailySenderNameChange = { dailySenderName = it },
+                isDailyParserEnabled = isDailyParserEnabled,
+                onDailyParserEnabledChange = { isDailyParserEnabled = it },
+                savingsSenderName = savingsSenderName,
+                onSavingsSenderNameChange = { savingsSenderName = it },
+                isSavingsParserEnabled = isSavingsParserEnabled,
+                onSavingsParserEnabledChange = { isSavingsParserEnabled = it },
+                debitKeywords = debitKeywords,
+                onDebitKeywordsChange = { debitKeywords = it },
+                creditKeywords = creditKeywords,
+                onCreditKeywordsChange = { creditKeywords = it },
+                savingsTransferKeywords = savingsTransferKeywords,
+                onSavingsTransferKeywordsChange = { savingsTransferKeywords = it },
+                isSaving = uiState.isSaving,
+                onSave = {
+                    onUpdateBankMessageSettings(
+                        dailySenderName,
+                        isDailyParserEnabled,
+                        savingsSenderName,
+                        isSavingsParserEnabled,
+                        debitKeywords,
+                        creditKeywords,
+                        savingsTransferKeywords
                     )
                 }
             )
@@ -223,6 +275,113 @@ private fun ProfileSettingsCard(
                 Text(if (isSaving) "Saving..." else "Save profile")
             }
         }
+    }
+}
+
+@Composable
+private fun BankMessageSourcesCard(
+    dailySenderName: String,
+    onDailySenderNameChange: (String) -> Unit,
+    isDailyParserEnabled: Boolean,
+    onDailyParserEnabledChange: (Boolean) -> Unit,
+    savingsSenderName: String,
+    onSavingsSenderNameChange: (String) -> Unit,
+    isSavingsParserEnabled: Boolean,
+    onSavingsParserEnabledChange: (Boolean) -> Unit,
+    debitKeywords: String,
+    onDebitKeywordsChange: (String) -> Unit,
+    creditKeywords: String,
+    onCreditKeywordsChange: (String) -> Unit,
+    savingsTransferKeywords: String,
+    onSavingsTransferKeywordsChange: (String) -> Unit,
+    isSaving: Boolean,
+    onSave: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(text = "Bank Message Sources", style = MaterialTheme.typography.titleMedium)
+            SourceToggleRow(
+                title = "Daily-use parser",
+                isEnabled = isDailyParserEnabled,
+                onEnabledChange = onDailyParserEnabledChange
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = dailySenderName,
+                onValueChange = onDailySenderNameChange,
+                label = { Text("Daily-use sender name") },
+                singleLine = true
+            )
+            SourceToggleRow(
+                title = "Savings parser",
+                isEnabled = isSavingsParserEnabled,
+                onEnabledChange = onSavingsParserEnabledChange
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = savingsSenderName,
+                onValueChange = onSavingsSenderNameChange,
+                label = { Text("Savings sender name") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = debitKeywords,
+                onValueChange = onDebitKeywordsChange,
+                label = { Text("Debit keywords") },
+                minLines = 2
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = creditKeywords,
+                onValueChange = onCreditKeywordsChange,
+                label = { Text("Credit keywords") },
+                minLines = 2
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = savingsTransferKeywords,
+                onValueChange = onSavingsTransferKeywordsChange,
+                label = { Text("Savings transfer keywords") },
+                minLines = 2
+            )
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isSaving,
+                shape = MaterialTheme.shapes.medium,
+                onClick = onSave
+            ) {
+                Text(if (isSaving) "Saving..." else "Save bank message sources")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceToggleRow(
+    title: String,
+    isEnabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge
+        )
+        Switch(checked = isEnabled, onCheckedChange = onEnabledChange)
     }
 }
 

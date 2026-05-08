@@ -5,8 +5,9 @@ import kotlin.math.max
 object FinanceCalculator {
     fun dashboard(data: FinanceData, yearMonth: String, now: Long = System.currentTimeMillis()): DashboardMetrics {
         val monthTransactions = data.transactions.filter { it.yearMonth == yearMonth }
+        val monthIncomeTransactions = data.incomeTransactions.filter { it.yearMonth == yearMonth }
         val categoryById = data.categories.associateBy { it.id }
-        val totalIncome = data.profile.salary + data.profile.extraIncome
+        val totalIncome = data.profile.salary + data.profile.extraIncome + monthIncomeTransactions.sumOf { it.amount }
         val totalSpent = monthTransactions.sumOf { it.amount }
 
         val categorySpending = data.categories.map { category ->

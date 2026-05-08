@@ -3,6 +3,44 @@ package com.musab.niqdah.domain.finance
 object FinanceDefaults {
     const val MARRIAGE_GOAL_ID = "marriage_fund"
     const val DEFAULT_CURRENCY = "AED"
+    const val UNCATEGORIZED_CATEGORY_ID = "uncategorized"
+    const val FOOD_TRANSPORT_CATEGORY_ID = "food_transport"
+    const val RENT_CATEGORY_ID = "rent"
+    const val MEDICAL_CATEGORY_ID = "medical"
+    const val CLOTHING_CATEGORY_ID = "clothing"
+    const val FIANCEE_CATEGORY_ID = "fiancee"
+    const val FAMILY_GIFTS_CATEGORY_ID = "family_gifts_expense"
+    const val AVOID_CATEGORY_ID = "avoid"
+    const val MARRIAGE_SAVINGS_CATEGORY_ID = "marriage_savings"
+
+    val DEFAULT_DEBIT_KEYWORDS = listOf(
+        "debited",
+        "debit",
+        "spent",
+        "purchase",
+        "pos",
+        "paid",
+        "withdrawn",
+        "charged"
+    )
+
+    val DEFAULT_CREDIT_KEYWORDS = listOf(
+        "credited",
+        "credit",
+        "received",
+        "salary",
+        "refund",
+        "deposit"
+    )
+
+    val DEFAULT_SAVINGS_TRANSFER_KEYWORDS = listOf(
+        "transfer to savings",
+        "saving account",
+        "savings account",
+        "goal account",
+        "marriage savings",
+        "saved to"
+    )
 
     fun userProfile(uid: String, now: Long = System.currentTimeMillis()): UserProfile =
         UserProfile(
@@ -18,7 +56,15 @@ object FinanceDefaults {
     fun budgetCategories(now: Long = System.currentTimeMillis()): List<BudgetCategory> =
         listOf(
             BudgetCategory(
-                id = "rent",
+                id = UNCATEGORIZED_CATEGORY_ID,
+                name = "Uncategorized",
+                monthlyBudget = 0.0,
+                type = CategoryType.VARIABLE,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            BudgetCategory(
+                id = RENT_CATEGORY_ID,
                 name = "Rent",
                 monthlyBudget = 1300.0,
                 type = CategoryType.FIXED,
@@ -26,7 +72,7 @@ object FinanceDefaults {
                 updatedAtMillis = now
             ),
             BudgetCategory(
-                id = "food_transport",
+                id = FOOD_TRANSPORT_CATEGORY_ID,
                 name = "Food/transport",
                 monthlyBudget = 800.0,
                 type = CategoryType.VARIABLE,
@@ -34,7 +80,47 @@ object FinanceDefaults {
                 updatedAtMillis = now
             ),
             BudgetCategory(
-                id = "marriage_savings",
+                id = MEDICAL_CATEGORY_ID,
+                name = "Medical",
+                monthlyBudget = 250.0,
+                type = CategoryType.VARIABLE,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            BudgetCategory(
+                id = CLOTHING_CATEGORY_ID,
+                name = "Clothing",
+                monthlyBudget = 200.0,
+                type = CategoryType.VARIABLE,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            BudgetCategory(
+                id = FIANCEE_CATEGORY_ID,
+                name = "Fiancée",
+                monthlyBudget = 300.0,
+                type = CategoryType.VARIABLE,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            BudgetCategory(
+                id = FAMILY_GIFTS_CATEGORY_ID,
+                name = "Family gifts",
+                monthlyBudget = 200.0,
+                type = CategoryType.VARIABLE,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            BudgetCategory(
+                id = AVOID_CATEGORY_ID,
+                name = "Avoid",
+                monthlyBudget = 0.0,
+                type = CategoryType.VARIABLE,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            BudgetCategory(
+                id = MARRIAGE_SAVINGS_CATEGORY_ID,
                 name = "Marriage savings",
                 monthlyBudget = 1700.0,
                 type = CategoryType.SAVINGS,
@@ -111,5 +197,14 @@ object FinanceDefaults {
             remainingAmount = 7000.0,
             monthlyAutoReduction = 500.0,
             updatedAtMillis = now
+        )
+
+    fun bankMessageParserSettings(): BankMessageParserSettings =
+        BankMessageParserSettings(
+            dailyUseSource = BankMessageSourceSettings(senderName = "", isEnabled = true),
+            savingsSource = BankMessageSourceSettings(senderName = "", isEnabled = true),
+            debitKeywords = DEFAULT_DEBIT_KEYWORDS,
+            creditKeywords = DEFAULT_CREDIT_KEYWORDS,
+            savingsTransferKeywords = DEFAULT_SAVINGS_TRANSFER_KEYWORDS
         )
 }

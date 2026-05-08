@@ -9,7 +9,10 @@ interface FinanceRepository {
     suspend fun upsertCategory(category: BudgetCategory)
     suspend fun upsertTransaction(transaction: ExpenseTransaction)
     suspend fun deleteTransaction(transactionId: String)
+    suspend fun upsertIncomeTransaction(transaction: IncomeTransaction)
+    suspend fun deleteIncomeTransaction(transactionId: String)
     suspend fun upsertGoal(goal: SavingsGoal)
     suspend fun upsertDebt(debt: DebtTracker)
+    suspend fun upsertBankMessageSettings(settings: BankMessageParserSettings)
     suspend fun saveMonthlySnapshot(snapshot: MonthlySnapshot)
 }

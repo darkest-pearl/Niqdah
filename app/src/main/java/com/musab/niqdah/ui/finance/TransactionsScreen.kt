@@ -17,6 +17,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -45,7 +46,25 @@ import androidx.compose.ui.unit.dp
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.FinanceDates
+import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.NecessityLevel
+import com.musab.niqdah.domain.finance.ParsedBankMessage
+import com.musab.niqdah.domain.finance.ParsedBankMessageType
+
+private sealed interface TransactionTimelineItem {
+    val key: String
+    val occurredAtMillis: Long
+
+    data class ExpenseItem(val transaction: ExpenseTransaction) : TransactionTimelineItem {
+        override val key: String = "expense-${transaction.id}"
+        override val occurredAtMillis: Long = transaction.occurredAtMillis
+    }
+
+    data class IncomeItem(val transaction: IncomeTransaction) : TransactionTimelineItem {
+        override val key: String = "income-${transaction.id}"
+        override val occurredAtMillis: Long = transaction.occurredAtMillis
+    }
+}
 
 @Composable
 fun TransactionsScreen(
@@ -53,6 +72,9 @@ fun TransactionsScreen(
     padding: PaddingValues,
     onSaveTransaction: (ExpenseTransaction?, String, String, String, NecessityLevel, String) -> Unit,
     onDeleteTransaction: (String) -> Unit,
+    onDeleteIncomeTransaction: (String) -> Unit,
+    onPreviewBankMessage: (String, String) -> ParsedBankMessage,
+    onSaveImportedBankMessage: (ParsedBankMessageType, String, String, String?, String, NecessityLevel, String, String) -> Unit,
     onMonthSelected: (String) -> Unit,
     onCategoryFilterSelected: (String?) -> Unit,
     onClearError: () -> Unit
@@ -62,6 +84,10 @@ fun TransactionsScreen(
     val categories = uiState.data.categories
     val categoryById = categories.associateBy { it.id }
     val currency = uiState.data.profile.currency
+    val timelineItems = (
+        uiState.filteredTransactions.map { TransactionTimelineItem.ExpenseItem(it) } +
+            uiState.filteredIncomeTransactions.map { TransactionTimelineItem.IncomeItem(it) }
+        ).sortedByDescending { it.occurredAtMillis }
 
     LazyColumn(
         modifier = Modifier
@@ -111,27 +137,43 @@ fun TransactionsScreen(
                 }
             }
         }
+        item {
+            ImportBankMessageCard(
+                categories = categories,
+                profileCurrency = currency,
+                isSaving = uiState.isSaving,
+                onPreviewBankMessage = onPreviewBankMessage,
+                onSaveImportedBankMessage = onSaveImportedBankMessage
+            )
+        }
 
-        if (uiState.filteredTransactions.isEmpty()) {
+        if (timelineItems.isEmpty()) {
             item {
                 FinanceMetricCard(
                     title = "No transactions",
                     value = "Ready",
-                    subtitle = "Add a manual transaction to start tracking this month."
+                    subtitle = "Add a transaction or import a pasted bank message."
                 )
             }
         } else {
-            items(uiState.filteredTransactions, key = { it.id }) { transaction ->
-                TransactionCard(
-                    transaction = transaction,
-                    categoryName = categoryById[transaction.categoryId]?.name ?: "Uncategorized",
-                    currency = currency,
-                    onEdit = {
-                        editingTransaction = transaction
-                        showDialog = true
-                    },
-                    onDelete = { onDeleteTransaction(transaction.id) }
-                )
+            items(timelineItems, key = { it.key }) { item ->
+                when (item) {
+                    is TransactionTimelineItem.ExpenseItem -> TransactionCard(
+                        transaction = item.transaction,
+                        categoryName = categoryById[item.transaction.categoryId]?.name ?: "Uncategorized",
+                        currency = item.transaction.currency.ifBlank { currency },
+                        onEdit = {
+                            editingTransaction = item.transaction
+                            showDialog = true
+                        },
+                        onDelete = { onDeleteTransaction(item.transaction.id) }
+                    )
+                    is TransactionTimelineItem.IncomeItem -> IncomeTransactionCard(
+                        transaction = item.transaction,
+                        fallbackCurrency = currency,
+                        onDelete = { onDeleteIncomeTransaction(item.transaction.id) }
+                    )
+                }
             }
         }
     }
@@ -247,7 +289,7 @@ private fun TransactionCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(text = categoryName, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        text = "${transaction.necessity.label} • ${formatTransactionDate(transaction.occurredAtMillis)}",
+                        text = "${transaction.necessity.label} - ${formatTransactionDate(transaction.occurredAtMillis)}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -270,6 +312,342 @@ private fun TransactionCard(
                 IconButton(onClick = onDelete) {
                     Icon(imageVector = Icons.Rounded.Delete, contentDescription = "Delete transaction")
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IncomeTransactionCard(
+    transaction: IncomeTransaction,
+    fallbackCurrency: String,
+    onDelete: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = transaction.source.ifBlank { "Income" },
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                    Text(
+                        text = "Income - ${formatTransactionDate(transaction.occurredAtMillis)}",
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Text(
+                    text = "+${formatMoney(transaction.amount, transaction.currency.ifBlank { fallbackCurrency })}",
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            if (transaction.note.isNotBlank()) {
+                Text(
+                    text = transaction.note,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                IconButton(onClick = onDelete) {
+                    Icon(imageVector = Icons.Rounded.Delete, contentDescription = "Delete income")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImportBankMessageCard(
+    categories: List<BudgetCategory>,
+    profileCurrency: String,
+    isSaving: Boolean,
+    onPreviewBankMessage: (String, String) -> ParsedBankMessage,
+    onSaveImportedBankMessage: (ParsedBankMessageType, String, String, String?, String, NecessityLevel, String, String) -> Unit
+) {
+    var senderName by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf("") }
+    var preview by remember { mutableStateOf<ParsedBankMessage?>(null) }
+    var type by remember { mutableStateOf(ParsedBankMessageType.UNKNOWN) }
+    var amount by remember { mutableStateOf("") }
+    var parsedCurrency by remember { mutableStateOf(profileCurrency) }
+    var categoryId by remember { mutableStateOf<String?>(null) }
+    var description by remember { mutableStateOf("") }
+    var necessity by remember { mutableStateOf(NecessityLevel.OPTIONAL) }
+    var dateInput by remember { mutableStateOf(FinanceDates.todayInput()) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(text = "Import Message", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = senderName,
+                onValueChange = { senderName = it },
+                label = { Text("Sender name") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = message,
+                onValueChange = { message = it },
+                label = { Text("Bank message") },
+                minLines = 4
+            )
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = message.isNotBlank(),
+                shape = MaterialTheme.shapes.medium,
+                onClick = {
+                    val parsed = onPreviewBankMessage(senderName, message)
+                    preview = parsed
+                    senderName = parsed.senderName.ifBlank { senderName }
+                    type = parsed.type
+                    amount = parsed.amount?.let { formatInputMoney(it) }.orEmpty()
+                    parsedCurrency = parsed.currency.ifBlank { profileCurrency }
+                    categoryId = parsed.suggestedCategoryId ?: categories.firstOrNull()?.id
+                    description = parsed.description
+                    necessity = parsed.suggestedNecessity
+                    dateInput = FinanceDates.dateInputFromMillis(parsed.occurredAtMillis)
+                }
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Search,
+                    contentDescription = null,
+                    modifier = Modifier.padding(end = 8.dp).size(18.dp)
+                )
+                Text("Preview import")
+            }
+
+            preview?.let { parsed ->
+                ParsedMessagePreview(
+                    parsed = parsed,
+                    categories = categories,
+                    selectedType = type,
+                    onTypeSelected = { type = it },
+                    amount = amount,
+                    onAmountChange = { amount = it },
+                    currency = parsedCurrency,
+                    onCurrencyChange = { parsedCurrency = it },
+                    categoryId = categoryId,
+                    onCategorySelected = { categoryId = it },
+                    description = description,
+                    onDescriptionChange = { description = it },
+                    necessity = necessity,
+                    onNecessitySelected = { necessity = it },
+                    dateInput = dateInput,
+                    onDateChange = { dateInput = it }
+                )
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isSaving,
+                    shape = MaterialTheme.shapes.medium,
+                    onClick = {
+                        onSaveImportedBankMessage(
+                            type,
+                            amount,
+                            parsedCurrency,
+                            categoryId,
+                            description,
+                            necessity,
+                            dateInput,
+                            senderName
+                        )
+                        preview = null
+                        message = ""
+                    }
+                ) {
+                    Text(if (isSaving) "Saving..." else "Save import")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ParsedMessagePreview(
+    parsed: ParsedBankMessage,
+    categories: List<BudgetCategory>,
+    selectedType: ParsedBankMessageType,
+    onTypeSelected: (ParsedBankMessageType) -> Unit,
+    amount: String,
+    onAmountChange: (String) -> Unit,
+    currency: String,
+    onCurrencyChange: (String) -> Unit,
+    categoryId: String?,
+    onCategorySelected: (String?) -> Unit,
+    description: String,
+    onDescriptionChange: (String) -> Unit,
+    necessity: NecessityLevel,
+    onNecessitySelected: (NecessityLevel) -> Unit,
+    dateInput: String,
+    onDateChange: (String) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        PreviewLine(label = "Sender", value = parsed.senderName.ifBlank { "Unknown" })
+        PreviewLine(label = "Source", value = parsed.sourceType.label)
+        PreviewLine(label = "Confidence", value = parsed.confidence.label)
+        parsed.availableBalance?.let {
+            PreviewLine(label = "Available balance", value = formatMoney(it, parsed.currency))
+        }
+        MessageTypePicker(selectedType = selectedType, onTypeSelected = onTypeSelected)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                modifier = Modifier.weight(1f),
+                value = amount,
+                onValueChange = onAmountChange,
+                label = { Text("Amount") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+            )
+            OutlinedTextField(
+                modifier = Modifier.weight(1f),
+                value = currency,
+                onValueChange = onCurrencyChange,
+                label = { Text("Currency") },
+                singleLine = true
+            )
+        }
+        if (selectedType == ParsedBankMessageType.EXPENSE) {
+            CategoryPicker(
+                categories = categories,
+                selectedCategoryId = categoryId,
+                onCategorySelected = onCategorySelected
+            )
+        } else {
+            PreviewLine(label = "Suggested category", value = parsed.suggestedCategoryName)
+        }
+        OutlinedTextField(
+            modifier = Modifier.fillMaxWidth(),
+            value = dateInput,
+            onValueChange = onDateChange,
+            label = { Text("Date") },
+            supportingText = { Text("YYYY-MM-DD") },
+            singleLine = true
+        )
+        OutlinedTextField(
+            modifier = Modifier.fillMaxWidth(),
+            value = description,
+            onValueChange = onDescriptionChange,
+            label = { Text("Description") },
+            minLines = 2
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            NecessityLevel.entries.forEach { level ->
+                FilterChip(
+                    selected = necessity == level,
+                    onClick = { onNecessitySelected(level) },
+                    label = { Text(level.label) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PreviewLine(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(text = label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            text = value,
+            modifier = Modifier.padding(start = 12.dp),
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun MessageTypePicker(
+    selectedType: ParsedBankMessageType,
+    onTypeSelected: (ParsedBankMessageType) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        OutlinedButton(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.medium,
+            onClick = { expanded = true }
+        ) {
+            Text(
+                text = "Type: ${selectedType.label}",
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Icon(imageVector = Icons.Rounded.KeyboardArrowDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            ParsedBankMessageType.entries.forEach { type ->
+                DropdownMenuItem(
+                    text = { Text(type.label) },
+                    onClick = {
+                        onTypeSelected(type)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryPicker(
+    categories: List<BudgetCategory>,
+    selectedCategoryId: String?,
+    onCategorySelected: (String?) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val categoryName = categories.firstOrNull { it.id == selectedCategoryId }?.name ?: "Choose category"
+
+    Box {
+        OutlinedButton(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.medium,
+            onClick = { expanded = true }
+        ) {
+            Text(
+                text = "Category: $categoryName",
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Icon(imageVector = Icons.Rounded.KeyboardArrowDown, contentDescription = null)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            categories.forEach { category ->
+                DropdownMenuItem(
+                    text = { Text("${category.name} (${category.type.label})") },
+                    onClick = {
+                        onCategorySelected(category.id)
+                        expanded = false
+                    }
+                )
             }
         }
     }
