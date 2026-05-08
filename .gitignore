@@ -1,0 +1,19 @@
+.gradle/
+.idea/
+build/
+*/build/
+
+local.properties
+*.iml
+
+# Firebase config is generated per Firebase project and should not be committed.
+app/google-services.json
+
+# Signing material
+*.jks
+*.keystore
+keystore.properties
+
+# OS files
+.DS_Store
+Thumbs.db
