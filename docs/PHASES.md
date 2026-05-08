@@ -10,7 +10,7 @@ Add manual transaction entry, categories, fixed expense setup, dashboard calcula
 
 ## Phase 3 AI Chat Backend
 
-Add a backend-backed AI chat experience that can help set budgets, classify expenses, and reason about purchases against the user's plan.
+Add a backend-backed AI chat experience that can help set budgets, classify expenses, and reason about purchases against the user's plan. The Android app calls Firebase Cloud Functions, and the Cloud Function calls the OpenAI Responses API using a secret-backed `OPENAI_API_KEY`. Complete for the first secure chat version.
 
 ## Phase 4 SMS/Import Parser
 

@@ -8,6 +8,11 @@ local.properties
 
 # Firebase config is generated per Firebase project and should not be committed.
 app/google-services.json
+functions/.secret.local
+functions/.env*
+!functions/.env.example
+functions/node_modules/
+functions/lib/
 
 # Signing material
 *.jks

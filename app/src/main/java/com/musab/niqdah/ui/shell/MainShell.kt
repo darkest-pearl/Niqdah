@@ -1,10 +1,5 @@
 package com.musab.niqdah.ui.shell
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ReceiptLong
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -29,10 +24,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
+import com.musab.niqdah.ui.ai.AiChatScreen
+import com.musab.niqdah.ui.ai.AiChatUiState
+import com.musab.niqdah.ui.ai.AiChatViewModel
 import com.musab.niqdah.ui.finance.DashboardScreen
-import com.musab.niqdah.ui.finance.FinanceHeader
-import com.musab.niqdah.ui.finance.FinanceMetricCard
 import com.musab.niqdah.ui.finance.FinanceUiState
 import com.musab.niqdah.ui.finance.FinanceViewModel
 import com.musab.niqdah.ui.finance.GoalsScreen
@@ -56,6 +51,8 @@ fun MainShell(
     userEmail: String?,
     financeUiState: FinanceUiState,
     financeViewModel: FinanceViewModel,
+    aiChatUiState: AiChatUiState,
+    aiChatViewModel: AiChatViewModel,
     onLogout: () -> Unit
 ) {
     var selectedDestination by rememberSaveable { mutableStateOf(ShellDestination.Dashboard) }
@@ -118,7 +115,13 @@ fun MainShell(
                 onRecordDebtPayment = financeViewModel::recordDebtPayment,
                 onClearError = financeViewModel::clearError
             )
-            ShellDestination.AiChat -> AiChatPlaceholderScreen(padding = padding)
+            ShellDestination.AiChat -> AiChatScreen(
+                chatUiState = aiChatUiState,
+                financeUiState = financeUiState,
+                padding = padding,
+                onSendMessage = aiChatViewModel::sendMessage,
+                onClearError = aiChatViewModel::clearError
+            )
             ShellDestination.Settings -> SettingsScreen(
                 uiState = financeUiState,
                 userEmail = userEmail,
@@ -127,31 +130,6 @@ fun MainShell(
                 onUpdateCategoryBudgets = financeViewModel::updateCategoryBudgets,
                 onLogout = onLogout,
                 onClearError = financeViewModel::clearError
-            )
-        }
-    }
-}
-
-@Composable
-private fun AiChatPlaceholderScreen(padding: PaddingValues) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(padding),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item {
-            FinanceHeader(
-                title = "AI Chat",
-                subtitle = "Phase 3 will connect this to a backend assistant."
-            )
-        }
-        item {
-            FinanceMetricCard(
-                title = "Future assistant",
-                value = "Phase 3",
-                subtitle = "Chat with Niqdah to set budgets, classify expenses, and ask whether a purchase fits your plan."
             )
         }
     }

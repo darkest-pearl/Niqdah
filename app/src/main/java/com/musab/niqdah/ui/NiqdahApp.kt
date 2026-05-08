@@ -23,9 +23,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.musab.niqdah.data.ai.FirebaseAiChatRepository
 import com.musab.niqdah.data.auth.FirebaseAuthRepository
 import com.musab.niqdah.data.finance.FirebaseFinanceRepository
 import com.musab.niqdah.domain.auth.AuthState
+import com.musab.niqdah.ui.ai.AiChatViewModel
 import com.musab.niqdah.ui.auth.AuthRoute
 import com.musab.niqdah.ui.auth.AuthViewModel
 import com.musab.niqdah.ui.finance.FinanceViewModel
@@ -58,11 +60,19 @@ fun NiqdahApp() {
                 factory = FinanceViewModel.Factory(financeRepository)
             )
             val financeUiState by financeViewModel.uiState.collectAsStateWithLifecycle()
+            val aiChatRepository = remember(context) { FirebaseAiChatRepository(context) }
+            val aiChatViewModel: AiChatViewModel = viewModel(
+                key = "ai-chat-${authState.uid}",
+                factory = AiChatViewModel.Factory(aiChatRepository)
+            )
+            val aiChatUiState by aiChatViewModel.uiState.collectAsStateWithLifecycle()
 
             MainShell(
                 userEmail = authState.email,
                 financeUiState = financeUiState,
                 financeViewModel = financeViewModel,
+                aiChatUiState = aiChatUiState,
+                aiChatViewModel = aiChatViewModel,
                 onLogout = authViewModel::signOut
             )
         }
