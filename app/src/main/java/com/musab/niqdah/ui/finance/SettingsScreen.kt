@@ -1,6 +1,7 @@
 package com.musab.niqdah.ui.finance
 
 import android.Manifest
+import android.os.Build
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -66,17 +67,30 @@ fun SettingsScreen(
     var isSmsPermissionGranted by remember {
         mutableStateOf(context.hasReceiveSmsPermission())
     }
+    var isNotificationPermissionGranted by remember {
+        mutableStateOf(context.hasPostNotificationsPermission())
+    }
     var isDailyParserEnabled by remember { mutableStateOf(true) }
     var savingsSenderName by remember { mutableStateOf("") }
     var isSavingsParserEnabled by remember { mutableStateOf(true) }
     var debitKeywords by remember { mutableStateOf("") }
     var creditKeywords by remember { mutableStateOf("") }
     var savingsTransferKeywords by remember { mutableStateOf("") }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        isNotificationPermissionGranted = granted
+        isAutomaticSmsImportEnabled = isSmsPermissionGranted
+    }
     val smsPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         isSmsPermissionGranted = granted
-        isAutomaticSmsImportEnabled = granted
+        if (granted && !isNotificationPermissionGranted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            isAutomaticSmsImportEnabled = granted
+        }
     }
 
     LaunchedEffect(profile, debt) {
@@ -156,13 +170,23 @@ fun SettingsScreen(
             BankMessageSourcesCard(
                 isAutomaticSmsImportEnabled = isAutomaticSmsImportEnabled,
                 onAutomaticSmsImportEnabledChange = { enabled ->
-                    if (enabled && !isSmsPermissionGranted) {
-                        smsPermissionLauncher.launch(Manifest.permission.RECEIVE_SMS)
-                    } else {
-                        isAutomaticSmsImportEnabled = enabled
+                    when {
+                        !enabled -> isAutomaticSmsImportEnabled = false
+                        !isSmsPermissionGranted -> smsPermissionLauncher.launch(Manifest.permission.RECEIVE_SMS)
+                        !isNotificationPermissionGranted &&
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        else -> isAutomaticSmsImportEnabled = true
                     }
                 },
                 isSmsPermissionGranted = isSmsPermissionGranted,
+                isNotificationPermissionGranted = isNotificationPermissionGranted,
+                dailyUseBalance = uiState.data.latestDailyUseBalance?.let {
+                    "${formatMoney(it.availableBalance, it.currency)} at ${formatTransactionDateTime(it.messageTimestampMillis)}"
+                } ?: "Not known",
+                savingsBalance = uiState.data.latestSavingsBalance?.let {
+                    "${formatMoney(it.availableBalance, it.currency)} at ${formatTransactionDateTime(it.messageTimestampMillis)}"
+                } ?: "Not known",
                 lastIgnoredSender = uiState.data.bankMessageSettings.lastIgnoredSender,
                 lastParsedBankMessageAtMillis = uiState.data.bankMessageSettings.lastParsedBankMessageAtMillis,
                 dailySenderName = dailySenderName,
@@ -313,6 +337,9 @@ private fun BankMessageSourcesCard(
     isAutomaticSmsImportEnabled: Boolean,
     onAutomaticSmsImportEnabledChange: (Boolean) -> Unit,
     isSmsPermissionGranted: Boolean,
+    isNotificationPermissionGranted: Boolean,
+    dailyUseBalance: String,
+    savingsBalance: String,
     lastIgnoredSender: String,
     lastParsedBankMessageAtMillis: Long,
     dailySenderName: String,
@@ -365,13 +392,33 @@ private fun BankMessageSourcesCard(
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
+                text = "Notification permission: ${if (isNotificationPermissionGranted) "granted" else "not granted"}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Automatic SMS import: ${if (isAutomaticSmsImportEnabled) "enabled" else "disabled"}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Daily-use latest balance: $dailyUseBalance",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Savings latest balance: $savingsBalance",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
                 text = "Last ignored sender: ${lastIgnoredSender.ifBlank { "None" }}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
                 text = "Last parsed bank message: ${
-                    lastParsedBankMessageAtMillis.takeIf { it > 0L }?.let { formatTransactionDate(it) } ?: "None"
+                    lastParsedBankMessageAtMillis.takeIf { it > 0L }?.let { formatTransactionDateTime(it) } ?: "None"
                 }",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium
@@ -460,6 +507,13 @@ private fun SourceToggleRow(
 
 private fun android.content.Context.hasReceiveSmsPermission(): Boolean =
     ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED
+
+private fun android.content.Context.hasPostNotificationsPermission(): Boolean =
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
 
 @Composable
 private fun CategoryBudgetField(

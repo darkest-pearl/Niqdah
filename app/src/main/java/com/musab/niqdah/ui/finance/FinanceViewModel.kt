@@ -167,7 +167,8 @@ class FinanceViewModel(
             rawMessage = messageInput,
             manualSenderName = senderInput,
             settings = state.data.bankMessageSettings,
-            categories = state.data.categories
+            categories = state.data.categories,
+            latestBalances = state.data.accountBalanceSnapshots
         )
     }
 
@@ -290,7 +291,7 @@ class FinanceViewModel(
                 amount = parsedAmount,
                 currency = pendingImport.currency,
                 categoryId = pendingImport.suggestedCategoryId,
-                description = pendingImport.description,
+                description = pendingImport.noteWithReviewContext(),
                 necessity = pendingImport.suggestedNecessity,
                 occurredAtMillis = pendingImport.occurredAtMillis,
                 senderName = pendingImport.senderName,
@@ -616,6 +617,12 @@ class FinanceViewModel(
             senderName = senderName,
             originalText = rawMessage
         )
+
+    private fun PendingBankImport.noteWithReviewContext(): String =
+        listOf(description.trim(), reviewNote.trim())
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString("\n")
 
     private fun formatDraftAmount(amount: Double): String =
         if (amount % 1.0 == 0.0) amount.toLong().toString() else amount.toString()

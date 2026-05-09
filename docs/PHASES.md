@@ -20,7 +20,13 @@ Add manual copy-paste bank message parsing with source settings, editable previe
 
 Add opt-in incoming SMS import after the manual parser proves stable. Phase 4B uses `RECEIVE_SMS` only for new incoming bank messages from configured senders, keeps `READ_SMS` out of the app, creates pending review drafts, and requires user review before saving. Complete for personal/dev APK experimentation.
 
-## Phase 4C Broader Import Options
+## Phase 4C Balance Tracking And Rich Pending Imports
+
+Add local account balance snapshots for daily-use and savings bank messages, richer pending-import notifications, and Save/Edit/Dismiss notification actions. Complete for review-first SMS imports with `RECEIVE_SMS` only and Android 13+ `POST_NOTIFICATIONS` runtime prompting.
+
+Privacy constraints remain unchanged: no `READ_SMS`, no raw SMS in notifications, no SMS content sent to OpenAI, no backend SMS access, and no automatic save of raw SMS without user action. Foreign-currency AED debit inference is allowed only as a medium-confidence pending draft with an explicit review note.
+
+## Phase 4D Broader Import Options
 
 Consider notification-listener import, statement import, or inbox scan support only after explicit user opt-in and a separate privacy review.
 

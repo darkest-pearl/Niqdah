@@ -1,6 +1,7 @@
 package com.musab.niqdah.domain.finance
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class BankMessageParserTest {
@@ -33,6 +34,45 @@ class BankMessageParserTest {
     }
 
     @Test
+    fun availableBalancePhrasesAreExtracted() {
+        val messages = listOf(
+            "AED 1 debited. Available balance AED 1,234.00",
+            "AED 1 debited. Avl Bal AED 1,234.00",
+            "AED 1 debited. Balance: AED 1,234.00",
+            "AED 1 debited. Current balance AED 1,234.00",
+            "AED 1 debited. Available limit AED 1,234.00"
+        )
+
+        messages.forEach { message ->
+            val parsed = parser.parse(
+                rawMessage = message,
+                manualSenderName = "BANKTEST",
+                settings = FinanceDefaults.bankMessageParserSettings(),
+                categories = categories,
+                nowMillis = 1_800_000_000_000L
+            )
+
+            assertEquals(message, 1_234.00, parsed.availableBalance ?: 0.0, 0.001)
+            assertEquals(message, "AED", parsed.availableBalanceCurrency)
+        }
+    }
+
+    @Test
+    fun balanceOnlyMessageDoesNotBecomeTransactionAmount() {
+        val parsed = parser.parse(
+            rawMessage = "Available balance AED 1,234.00",
+            manualSenderName = "BANKTEST",
+            settings = FinanceDefaults.bankMessageParserSettings(),
+            categories = categories,
+            nowMillis = 1_800_000_000_000L
+        )
+
+        assertNull(parsed.amount)
+        assertEquals(1_234.00, parsed.availableBalance ?: 0.0, 0.001)
+        assertEquals(ParsedBankMessageType.UNKNOWN, parsed.type)
+    }
+
+    @Test
     fun savingsTransferUsesSavingsCategory() {
         val parsed = parser.parse(
             rawMessage = "AED 1700 transferred to savings account on 2026-05-08",
@@ -53,6 +93,7 @@ class BankMessageParserTest {
         assertEquals("2026-05-08", FinanceDates.dateInputFromMillis(parsed.occurredAtMillis))
         assertEquals(ParsedBankMessageConfidence.HIGH, parsed.confidence)
         assertEquals("Transfer to savings", parsed.description)
+        assertEquals(BankMessageSourceType.SAVINGS, parsed.sourceType)
     }
 
     @Test
@@ -78,6 +119,40 @@ class BankMessageParserTest {
         assertEquals(NecessityLevel.NECESSARY, parsed.suggestedNecessity)
         assertEquals("2026-05-08", FinanceDates.dateInputFromMillis(parsed.occurredAtMillis))
         assertEquals(ParsedBankMessageConfidence.HIGH, parsed.confidence)
+        assertEquals(BankMessageSourceType.SAVINGS, parsed.sourceType)
+    }
+
+    @Test
+    fun foreignCurrencyPurchaseInfersAedDebitFromBalanceChange() {
+        val parsed = parser.parse(
+            rawMessage = "Card purchase USD 10.00 at Amazon. Available balance AED 1,190.00",
+            manualSenderName = "BANKTEST",
+            settings = FinanceDefaults.bankMessageParserSettings().copy(
+                dailyUseSource = BankMessageSourceSettings(senderName = "BANKTEST", isEnabled = true)
+            ),
+            categories = categories,
+            latestBalances = listOf(
+                AccountBalanceSnapshot(
+                    accountKind = AccountKind.DAILY_USE,
+                    sender = "BANKTEST",
+                    availableBalance = 1_234.00,
+                    currency = "AED",
+                    messageTimestampMillis = 1_799_999_000_000L,
+                    sourceMessageHash = "previous",
+                    createdAtMillis = 1_799_999_000_000L
+                )
+            ),
+            nowMillis = 1_800_000_000_000L
+        )
+
+        assertEquals(ParsedBankMessageType.EXPENSE, parsed.type)
+        assertEquals(44.00, parsed.amount ?: 0.0, 0.001)
+        assertEquals("AED", parsed.currency)
+        assertEquals(10.00, parsed.originalForeignAmount ?: 0.0, 0.001)
+        assertEquals("USD", parsed.originalForeignCurrency)
+        assertEquals(44.00, parsed.inferredAccountDebit ?: 0.0, 0.001)
+        assertEquals(ParsedBankMessageConfidence.MEDIUM, parsed.confidence)
+        assertEquals("AED amount inferred from balance change.", parsed.reviewNote)
     }
 
     @Test

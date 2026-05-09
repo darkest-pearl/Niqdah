@@ -17,6 +17,7 @@ class BankMessageParser {
         categories: List<BudgetCategory>,
         messageHash: String,
         receivedAtMillis: Long,
+        latestBalances: List<AccountBalanceSnapshot> = emptyList(),
         nowMillis: Long = System.currentTimeMillis()
     ): PendingBankImport {
         val parsed = parse(
@@ -24,6 +25,7 @@ class BankMessageParser {
             manualSenderName = senderName,
             settings = settings,
             categories = categories,
+            latestBalances = latestBalances,
             nowMillis = receivedAtMillis
         )
         return PendingBankImport(
@@ -36,6 +38,12 @@ class BankMessageParser {
             amount = parsed.amount,
             currency = parsed.currency,
             availableBalance = parsed.availableBalance,
+            availableBalanceCurrency = parsed.availableBalanceCurrency,
+            originalForeignAmount = parsed.originalForeignAmount,
+            originalForeignCurrency = parsed.originalForeignCurrency,
+            inferredAccountDebit = parsed.inferredAccountDebit,
+            isAmountInferredFromBalance = parsed.isAmountInferredFromBalance,
+            reviewNote = parsed.reviewNote,
             description = parsed.description,
             occurredAtMillis = parsed.occurredAtMillis,
             suggestedCategoryId = parsed.suggestedCategoryId,
@@ -53,18 +61,19 @@ class BankMessageParser {
         manualSenderName: String,
         settings: BankMessageParserSettings,
         categories: List<BudgetCategory>,
+        latestBalances: List<AccountBalanceSnapshot> = emptyList(),
         nowMillis: Long = System.currentTimeMillis()
     ): ParsedBankMessage {
         val compactMessage = rawMessage.compact()
         val senderName = manualSenderName.trim().ifBlank { extractSender(rawMessage) }
-        val sourceType = resolveSourceType(senderName, compactMessage, settings)
-        val canUseDaily = settings.dailyUseSource.isEnabled &&
-            (sourceType == BankMessageSourceType.DAILY_USE || sourceType == BankMessageSourceType.UNKNOWN)
         val savingsKeywords = mergedKeywords(
             settings.savingsTransferKeywords,
             FinanceDefaults.DEFAULT_SAVINGS_TRANSFER_KEYWORDS,
             STRONG_SAVINGS_TRANSFER_KEYWORDS
         )
+        val sourceType = resolveSourceType(senderName, compactMessage, settings, savingsKeywords)
+        val canUseDaily = settings.dailyUseSource.isEnabled &&
+            (sourceType == BankMessageSourceType.DAILY_USE || sourceType == BankMessageSourceType.UNKNOWN)
         val debitKeywords = mergedKeywords(
             settings.debitKeywords,
             FinanceDefaults.DEFAULT_DEBIT_KEYWORDS,
@@ -86,14 +95,35 @@ class BankMessageParser {
         }
 
         val moneyMentions = extractMoneyMentions(rawMessage)
-        val transactionAmount = chooseTransactionAmount(moneyMentions, compactMessage)
-        val amount = transactionAmount?.amount
-        val currency = transactionAmount?.currency
+        val foreignTransactionAmount = chooseTransactionAmount(
+            moneyMentions.filter { !it.isBalanceLike && it.currency != FinanceDefaults.DEFAULT_CURRENCY },
+            compactMessage
+        )
+        val explicitAedTransactionAmount = chooseTransactionAmount(
+            moneyMentions.filter { !it.isBalanceLike && it.currency == FinanceDefaults.DEFAULT_CURRENCY },
+            compactMessage
+        )
+        val transactionAmount = when {
+            foreignTransactionAmount != null && explicitAedTransactionAmount != null -> explicitAedTransactionAmount
+            else -> chooseTransactionAmount(moneyMentions, compactMessage)
+        }
+        val balanceMention = chooseAvailableBalance(moneyMentions)
+        val balanceCurrency = balanceMention?.currency ?: FinanceDefaults.DEFAULT_CURRENCY
+        val inference = inferDebitFromBalanceChange(
+            accountKind = sourceType.toAccountKind(),
+            latestBalances = latestBalances,
+            currentBalance = balanceMention,
+            clearerAedTransactionAmount = explicitAedTransactionAmount,
+            foreignTransactionAmount = foreignTransactionAmount
+        )
+        val amount = inference?.amount ?: transactionAmount?.amount
+        val currency = inference?.currency
+            ?: transactionAmount?.currency
             ?: moneyMentions.firstOrNull()?.currency
             ?: FinanceDefaults.DEFAULT_CURRENCY
         val hasExplicitCurrency = transactionAmount?.hasExplicitCurrency == true ||
             moneyMentions.any { !it.isBalanceLike && it.hasExplicitCurrency }
-        val availableBalance = moneyMentions.firstOrNull { it.isBalanceLike }?.amount
+        val availableBalance = balanceMention?.amount
         val occurredAt = parseDateMillis(rawMessage, nowMillis) ?: nowMillis
         val categorySuggestion = when (parsedType) {
             ParsedBankMessageType.SAVINGS_TRANSFER -> categoryFor(
@@ -123,12 +153,18 @@ class BankMessageParser {
             amount = amount,
             currency = currency,
             availableBalance = availableBalance,
+            availableBalanceCurrency = balanceCurrency,
+            originalForeignAmount = foreignTransactionAmount?.amount,
+            originalForeignCurrency = foreignTransactionAmount?.currency.orEmpty(),
+            inferredAccountDebit = inference?.amount,
+            isAmountInferredFromBalance = inference != null,
+            reviewNote = inference?.note.orEmpty(),
             description = description,
             occurredAtMillis = occurredAt,
             suggestedCategoryId = categorySuggestion.id,
             suggestedCategoryName = categorySuggestion.name,
             suggestedNecessity = categorySuggestion.necessity,
-            confidence = confidenceFor(
+            confidence = inference?.confidence ?: confidenceFor(
                 parsedType = parsedType,
                 amount = amount,
                 hasExplicitCurrency = hasExplicitCurrency,
@@ -140,21 +176,22 @@ class BankMessageParser {
     private fun resolveSourceType(
         senderName: String,
         compactMessage: String,
-        settings: BankMessageParserSettings
+        settings: BankMessageParserSettings,
+        savingsKeywords: List<String>
     ): BankMessageSourceType {
         val normalizedSender = senderName.normalizedToken()
         val dailySender = settings.dailyUseSource.senderName.normalizedToken()
         val savingsSender = settings.savingsSource.senderName.normalizedToken()
 
         return when {
+            settings.savingsSource.isEnabled &&
+                compactMessage.containsAny(savingsKeywords) -> BankMessageSourceType.SAVINGS
             settings.dailyUseSource.isEnabled &&
                 dailySender.isNotBlank() &&
                 normalizedSender.contains(dailySender) -> BankMessageSourceType.DAILY_USE
             settings.savingsSource.isEnabled &&
                 savingsSender.isNotBlank() &&
                 normalizedSender.contains(savingsSender) -> BankMessageSourceType.SAVINGS
-            settings.savingsSource.isEnabled &&
-                compactMessage.containsAny(settings.savingsTransferKeywords) -> BankMessageSourceType.SAVINGS
             settings.dailyUseSource.isEnabled &&
                 dailySender.isBlank() -> BankMessageSourceType.DAILY_USE
             else -> BankMessageSourceType.UNKNOWN
@@ -243,7 +280,7 @@ class BankMessageParser {
             start = start,
             end = end,
             context = context,
-            isBalanceLike = prefix.containsAny(listOf("balance", "available", "avail", "bal"))
+            isBalanceLike = isBalanceContext(prefix, context)
         )
     }
 
@@ -252,15 +289,55 @@ class BankMessageParser {
         compactMessage: String
     ): MoneyMention? {
         if (mentions.isEmpty()) return null
+        val transactionCandidates = mentions.filterNot { it.isBalanceLike }
+        if (transactionCandidates.isEmpty()) return null
         val hints = listOf("amount", "amt", "debited", "credited", "spent", "paid", "purchase", "transfer")
-        return mentions.maxByOrNull { mention ->
+        return transactionCandidates.maxByOrNull { mention ->
             var score = 0
-            if (!mention.isBalanceLike) score += 5
+            score += 5
             if (mention.context.containsAny(hints)) score += 4
             if (compactMessage.indexOf(mention.amount.cleanAmountText()).let { it >= 0 && it < 80 }) score += 1
-            if (mention.isBalanceLike) score -= 6
             score
         }
+    }
+
+    private fun chooseAvailableBalance(mentions: List<MoneyMention>): MoneyMention? =
+        mentions
+            .filter { it.isBalanceLike }
+            .maxByOrNull { mention ->
+                var score = 0
+                if (mention.currency == FinanceDefaults.DEFAULT_CURRENCY) score += 2
+                if (mention.context.containsAny(listOf("available balance", "avl bal", "avail bal"))) score += 3
+                if (mention.context.containsAny(listOf("current balance", "balance:", "available limit"))) score += 2
+                score
+            }
+
+    private fun inferDebitFromBalanceChange(
+        accountKind: AccountKind?,
+        latestBalances: List<AccountBalanceSnapshot>,
+        currentBalance: MoneyMention?,
+        clearerAedTransactionAmount: MoneyMention?,
+        foreignTransactionAmount: MoneyMention?
+    ): BalanceDebitInference? {
+        if (accountKind == null || currentBalance == null || foreignTransactionAmount == null) return null
+        if (clearerAedTransactionAmount != null) return null
+
+        val previousBalance = latestBalances
+            .filter { it.accountKind == accountKind && it.currency == currentBalance.currency }
+            .maxWithOrNull(
+                compareBy<AccountBalanceSnapshot> { it.messageTimestampMillis }
+                    .thenBy { it.createdAtMillis }
+            )
+            ?: return null
+        val inferredDebit = previousBalance.availableBalance - currentBalance.amount
+        if (!inferredDebit.isReasonableInferredDebit(previousBalance.availableBalance)) return null
+
+        return BalanceDebitInference(
+            amount = inferredDebit,
+            currency = currentBalance.currency,
+            confidence = ParsedBankMessageConfidence.MEDIUM,
+            note = INFERRED_BALANCE_NOTE
+        )
     }
 
     private fun inferCategory(
@@ -438,6 +515,15 @@ class BankMessageParser {
         return keywords.any { keyword -> keyword.trim().isNotBlank() && text.contains(keyword.trim().lowercase(Locale.US)) }
     }
 
+    private fun isBalanceContext(prefix: String, context: String): Boolean {
+        val balancePrefix = Regex(
+            """(?i)(?:available|avail|avl|current)\s+(?:balance|bal|limit)\s*[:\-]?$|(?:balance|bal)\s*[:\-]?$"""
+        )
+        return balancePrefix.containsMatchIn(prefix.trim()) ||
+            context.contains(Regex("""(?i)\b(?:available|avail|avl|current)\s+(?:balance|bal|limit)\s*[:\-]?\s*$""")) ||
+            context.contains(Regex("""(?i)\b(?:balance|bal)\s*[:\-]?\s*$"""))
+    }
+
     private fun mergedKeywords(vararg keywordGroups: List<String>): List<String> =
         keywordGroups
             .flatMap { it }
@@ -453,6 +539,16 @@ class BankMessageParser {
 
     private fun Double.cleanAmountText(): String =
         if (this % 1.0 == 0.0) toLong().toString() else toString()
+
+    private fun Double.isReasonableInferredDebit(previousBalance: Double): Boolean =
+        this > 0.0 && this <= previousBalance && this <= MAX_REASONABLE_INFERRED_DEBIT
+
+    private fun BankMessageSourceType.toAccountKind(): AccountKind? =
+        when (this) {
+            BankMessageSourceType.DAILY_USE -> AccountKind.DAILY_USE
+            BankMessageSourceType.SAVINGS -> AccountKind.SAVINGS
+            BankMessageSourceType.UNKNOWN -> null
+        }
 
     private data class MoneyMention(
         val amount: Double,
@@ -476,7 +572,17 @@ class BankMessageParser {
         val necessity: NecessityLevel
     )
 
+    private data class BalanceDebitInference(
+        val amount: Double,
+        val currency: String,
+        val confidence: ParsedBankMessageConfidence,
+        val note: String
+    )
+
     private companion object {
+        const val INFERRED_BALANCE_NOTE = "AED amount inferred from balance change."
+        const val MAX_REASONABLE_INFERRED_DEBIT = 10_000.0
+
         val STRONG_SAVINGS_TRANSFER_KEYWORDS = listOf(
             "transferred to savings",
             "transfer to savings",

@@ -2,7 +2,7 @@
 
 Niqdah is a personal Android finance app for disciplined budgeting and wedding preparation, built with Kotlin, Jetpack Compose, Material 3, Firebase Auth, Firestore, and Firebase Cloud Functions.
 
-Phase 4B includes email/password auth, a manual finance engine, dashboard calculations, transaction tracking, savings envelopes, debt tracking, editable settings, persistent Firestore data under each authenticated user, a secure AI Chat backend, manual bank message import, and experimental review-first incoming SMS import for selected bank senders.
+Phase 4C includes email/password auth, a manual finance engine, dashboard calculations, transaction tracking, savings envelopes, debt tracking, editable settings, persistent Firestore data under each authenticated user, a secure AI Chat backend, manual bank message import, review-first incoming SMS import for selected bank senders, account balance tracking, and rich pending-import notification actions.
 
 ## Tech Stack
 
@@ -99,6 +99,7 @@ users/{uid}/transactions/{transactionId}
 users/{uid}/incomeTransactions/{transactionId}
 users/{uid}/pendingBankImports/{importHash}
 users/{uid}/bankMessageImportHistory/{importHash}
+users/{uid}/accountBalanceSnapshots/{accountKind-importHash}
 users/{uid}/savingsGoals/{goalId}
 users/{uid}/monthlySnapshots/{yearMonth}
 ```
@@ -137,6 +138,22 @@ Privacy and control rules:
 - Duplicate protection uses a hash of sender, message body, and a rounded received timestamp.
 
 Tapping a bank-import notification opens the Transactions tab, where **Pending Bank Imports** shows sender, type, amount, currency, suggested category, necessity, date, confidence, and a hidden-by-default message body.
+
+## Phase 4C Balance Tracking And Notification Actions
+
+Phase 4C stores local account balance snapshots when a matching bank SMS contains an available balance phrase such as `Available balance AED 1,234.00`, `Avl Bal AED 1,234.00`, `Balance: AED 1,234.00`, `Current balance AED 1,234.00`, or common available-limit wording. The parser keeps balance amounts separate from transaction amounts, so a balance-only message does not become an expense.
+
+Dashboard and Settings show the latest daily-use balance, latest savings balance, and last balance update time. Balance snapshots are stored under the signed-in user's Firestore data and are keyed from the pending import hash; they do not require inbox scanning.
+
+Foreign currency card purchases can keep the original foreign amount and currency. If the previous balance for the same account and the new AED balance are both known, Niqdah may suggest the AED debit from the balance difference and marks the draft with medium confidence plus the note `AED amount inferred from balance change.` Because other transactions can happen between bank messages, inferred AED amounts always stay in pending review and are never auto-finalized.
+
+Pending import notifications now show parsed financial summaries only, never the full SMS body. Notifications can include Save, Edit, and Dismiss actions:
+
+- Save writes the pending import through the same review save behavior, removes it from pending imports, and posts `Saved to Niqdah.` when notifications are allowed. If no Firebase user is signed in, it opens the app/login and does not save.
+- Edit opens the Transactions pending review area without saving.
+- Dismiss marks the pending import dismissed and removes it from the pending list.
+
+Android 13+ devices also request `POST_NOTIFICATIONS` when automatic SMS import is enabled so review notifications and confirmation notifications can appear. The app still does not request `READ_SMS`, does not send SMS content to OpenAI, does not let the backend read SMS, and does not auto-save raw SMS without user action.
 
 ## Open And Run In Android Studio
 
@@ -196,12 +213,15 @@ Included:
 - Manual transaction add, edit, delete, note, month filter, category filter, and necessity level
 - Manual bank message import with parser preview and editable fields
 - Experimental incoming SMS bank import with pending review drafts
+- Account balance snapshots for daily-use and savings bank messages
+- Save, Edit, and Dismiss notification actions for pending bank import drafts
 - Daily-use and savings bank message source settings
 - Rule-based category suggestions for pasted bank messages
 - Imported income records from credit messages
 - Marriage fund and wedding-preparation envelopes
 - Debt tracker and debt payment updates
 - Dashboard calculations for income, spending, safe-to-spend, savings, debt, overspending alerts, and health summary
+- Dashboard and Settings latest balance status fields
 - Firestore persistence under `users/{uid}`
 - AI Chat with in-session history
 - Secure Cloud Function backend for OpenAI Responses API

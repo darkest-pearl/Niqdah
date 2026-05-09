@@ -92,10 +92,28 @@ data class FinanceData(
     val transactions: List<ExpenseTransaction>,
     val incomeTransactions: List<IncomeTransaction>,
     val pendingBankImports: List<PendingBankImport>,
+    val accountBalanceSnapshots: List<AccountBalanceSnapshot>,
     val goals: List<SavingsGoal>,
     val debt: DebtTracker,
     val bankMessageSettings: BankMessageParserSettings
 ) {
+    val latestDailyUseBalance: AccountBalanceSnapshot?
+        get() = latestBalance(AccountKind.DAILY_USE)
+
+    val latestSavingsBalance: AccountBalanceSnapshot?
+        get() = latestBalance(AccountKind.SAVINGS)
+
+    val lastBalanceUpdateMillis: Long
+        get() = accountBalanceSnapshots.maxOfOrNull { it.createdAtMillis } ?: 0L
+
+    private fun latestBalance(accountKind: AccountKind): AccountBalanceSnapshot? =
+        accountBalanceSnapshots
+            .filter { it.accountKind == accountKind }
+            .maxWithOrNull(
+                compareBy<AccountBalanceSnapshot> { it.messageTimestampMillis }
+                    .thenBy { it.createdAtMillis }
+            )
+
     companion object {
         fun empty(uid: String = ""): FinanceData =
             FinanceData(
@@ -104,12 +122,28 @@ data class FinanceData(
                 transactions = emptyList(),
                 incomeTransactions = emptyList(),
                 pendingBankImports = emptyList(),
+                accountBalanceSnapshots = emptyList(),
                 goals = emptyList(),
                 debt = FinanceDefaults.debtTracker(),
                 bankMessageSettings = FinanceDefaults.bankMessageParserSettings()
             )
     }
 }
+
+enum class AccountKind(val label: String) {
+    DAILY_USE("Daily-use"),
+    SAVINGS("Savings")
+}
+
+data class AccountBalanceSnapshot(
+    val accountKind: AccountKind,
+    val sender: String,
+    val availableBalance: Double,
+    val currency: String,
+    val messageTimestampMillis: Long,
+    val sourceMessageHash: String,
+    val createdAtMillis: Long
+)
 
 data class BankMessageParserSettings(
     val dailyUseSource: BankMessageSourceSettings = BankMessageSourceSettings(),
@@ -155,6 +189,12 @@ data class ParsedBankMessage(
     val amount: Double? = null,
     val currency: String = FinanceDefaults.DEFAULT_CURRENCY,
     val availableBalance: Double? = null,
+    val availableBalanceCurrency: String = FinanceDefaults.DEFAULT_CURRENCY,
+    val originalForeignAmount: Double? = null,
+    val originalForeignCurrency: String = "",
+    val inferredAccountDebit: Double? = null,
+    val isAmountInferredFromBalance: Boolean = false,
+    val reviewNote: String = "",
     val description: String = "",
     val occurredAtMillis: Long,
     val suggestedCategoryId: String? = null,
@@ -173,6 +213,12 @@ data class PendingBankImport(
     val amount: Double?,
     val currency: String,
     val availableBalance: Double?,
+    val availableBalanceCurrency: String,
+    val originalForeignAmount: Double?,
+    val originalForeignCurrency: String,
+    val inferredAccountDebit: Double?,
+    val isAmountInferredFromBalance: Boolean,
+    val reviewNote: String,
     val description: String,
     val occurredAtMillis: Long,
     val suggestedCategoryId: String?,

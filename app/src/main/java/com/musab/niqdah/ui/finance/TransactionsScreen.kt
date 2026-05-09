@@ -429,7 +429,21 @@ private fun PendingBankImportCard(
             if (pendingImport.availableBalance != null) {
                 PendingImportLine(
                     "Available balance",
-                    formatMoney(pendingImport.availableBalance, pendingImport.currency)
+                    formatMoney(pendingImport.availableBalance, pendingImport.availableBalanceCurrency)
+                )
+            }
+            if (pendingImport.originalForeignAmount != null && pendingImport.originalForeignCurrency.isNotBlank()) {
+                PendingImportLine(
+                    "Original amount",
+                    formatMoney(pendingImport.originalForeignAmount, pendingImport.originalForeignCurrency)
+                )
+            }
+            if (pendingImport.reviewNote.isNotBlank()) {
+                Text(
+                    text = pendingImport.reviewNote,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
             if (showMessage) {
@@ -526,9 +540,32 @@ private fun PendingBankImportEditDialog(
                     value = amount,
                     onValueChange = { amount = it },
                     label = { Text("Amount") },
+                    supportingText = {
+                        if (pendingImport.reviewNote.isNotBlank()) {
+                            Text(pendingImport.reviewNote)
+                        }
+                    },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 )
+                if (pendingImport.availableBalance != null) {
+                    PreviewLine(
+                        label = "Available balance",
+                        value = formatMoney(
+                            pendingImport.availableBalance,
+                            pendingImport.availableBalanceCurrency
+                        )
+                    )
+                }
+                if (pendingImport.originalForeignAmount != null && pendingImport.originalForeignCurrency.isNotBlank()) {
+                    PreviewLine(
+                        label = "Original amount",
+                        value = formatMoney(
+                            pendingImport.originalForeignAmount,
+                            pendingImport.originalForeignCurrency
+                        )
+                    )
+                }
                 if (pendingImport.type == ParsedBankMessageType.EXPENSE) {
                     CategoryPicker(
                         categories = categories,
@@ -728,7 +765,16 @@ private fun ParsedMessagePreview(
         PreviewLine(label = "Source", value = parsed.sourceType.label)
         PreviewLine(label = "Confidence", value = parsed.confidence.label)
         parsed.availableBalance?.let {
-            PreviewLine(label = "Available balance", value = formatMoney(it, parsed.currency))
+            PreviewLine(label = "Available balance", value = formatMoney(it, parsed.availableBalanceCurrency))
+        }
+        if (parsed.originalForeignAmount != null && parsed.originalForeignCurrency.isNotBlank()) {
+            PreviewLine(
+                label = "Original amount",
+                value = formatMoney(parsed.originalForeignAmount, parsed.originalForeignCurrency)
+            )
+        }
+        if (parsed.reviewNote.isNotBlank()) {
+            PreviewLine(label = "Review note", value = parsed.reviewNote)
         }
         MessageTypePicker(selectedType = selectedType, onTypeSelected = onTypeSelected)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

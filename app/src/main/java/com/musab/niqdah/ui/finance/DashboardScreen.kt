@@ -57,6 +57,37 @@ fun DashboardScreen(
         } else {
             item {
                 FinanceMetricCard(
+                    title = "Daily-use account balance",
+                    value = uiState.data.latestDailyUseBalance?.let {
+                        formatMoney(it.availableBalance, it.currency)
+                    } ?: "Not known yet",
+                    subtitle = uiState.data.latestDailyUseBalance?.let {
+                        "Last update ${formatTransactionDateTime(it.messageTimestampMillis)} from ${it.sender.ifBlank { "bank SMS" }}."
+                    } ?: "Niqdah will show this after a reviewed bank SMS includes an available balance."
+                )
+            }
+            item {
+                FinanceMetricCard(
+                    title = "Savings account balance",
+                    value = uiState.data.latestSavingsBalance?.let {
+                        formatMoney(it.availableBalance, it.currency)
+                    } ?: "Not known yet",
+                    subtitle = uiState.data.latestSavingsBalance?.let {
+                        "Last update ${formatTransactionDateTime(it.messageTimestampMillis)} from ${it.sender.ifBlank { "bank SMS" }}."
+                    } ?: "Savings balance will appear after a savings bank message includes an available balance."
+                )
+            }
+            item {
+                FinanceMetricCard(
+                    title = "Last balance update",
+                    value = uiState.data.lastBalanceUpdateMillis.takeIf { it > 0L }?.let {
+                        formatTransactionDateTime(it)
+                    } ?: "No balance updates",
+                    subtitle = "Balance snapshots are parsed from bank SMS summaries only."
+                )
+            }
+            item {
+                FinanceMetricCard(
                     title = "Total monthly income",
                     value = formatMoney(dashboard.totalMonthlyIncome, currency),
                     subtitle = "Profile income plus imported credits."

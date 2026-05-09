@@ -1,6 +1,9 @@
 package com.musab.niqdah.ui.finance
 
 import com.musab.niqdah.domain.finance.FinanceDates
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -15,3 +18,7 @@ fun formatInputMoney(amount: Double): String =
 
 fun formatTransactionDate(millis: Long): String =
     FinanceDates.dateInputFromMillis(millis)
+
+fun formatTransactionDateTime(millis: Long): String =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.US)
+        .format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
