@@ -617,81 +617,100 @@ class FinanceViewModel(
             pendingImport = pendingImport,
             candidates = _uiState.value.data.pendingBankImports
         )
+        val isPairedTransfer = PendingBankImportSaveRules.isMatchedInternalTransferPair(pendingImport, paired)
 
-        val result = when (pendingImport.type) {
-            ParsedBankMessageType.EXPENSE -> {
-                writeImportedFinanceAction(
-                    type = pendingImport.type,
-                    amount = amount,
-                    currency = pendingImport.currency,
-                    categoryId = pendingImport.suggestedCategoryId,
-                    description = pendingImport.noteWithReviewContext(),
-                    necessity = pendingImport.suggestedNecessity,
-                    occurredAtMillis = pendingImport.occurredAtMillis,
-                    senderName = pendingImport.senderName,
-                    now = now
-                )
-            }
-            ParsedBankMessageType.INCOME -> {
-                writeImportedFinanceAction(
-                    type = pendingImport.type,
-                    amount = amount,
-                    currency = pendingImport.currency,
-                    categoryId = pendingImport.suggestedCategoryId,
-                    description = pendingImport.noteWithReviewContext(),
-                    necessity = pendingImport.suggestedNecessity,
-                    occurredAtMillis = pendingImport.occurredAtMillis,
-                    senderName = pendingImport.senderName,
-                    now = now
-                )
-            }
-            ParsedBankMessageType.SAVINGS_TRANSFER -> {
-                saveSavingsContribution(
-                    amount = amount,
-                    currency = pendingImport.currency,
-                    description = pendingImport.noteWithReviewContext(),
-                    occurredAtMillis = pendingImport.occurredAtMillis,
-                    now = now
-                )
-                if (paired?.type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT) {
-                    financeRepository.upsertInternalTransferRecord(
-                        PendingBankImportSaveRules.internalTransferRecord(
-                            debitImport = paired,
-                            pairedCreditImport = pendingImport,
-                            nowMillis = now
-                        )
-                    )
-                }
-                SaveResult.Saved(PendingBankImportSaveRules.savingsTransferSavedMessage(pendingImport))
-            }
-            ParsedBankMessageType.INTERNAL_TRANSFER_OUT -> {
-                financeRepository.upsertInternalTransferRecord(
-                    PendingBankImportSaveRules.internalTransferRecord(
-                        debitImport = pendingImport,
-                        pairedCreditImport = paired?.takeIf { it.type == ParsedBankMessageType.SAVINGS_TRANSFER },
-                        nowMillis = now
-                    )
-                )
-                if (paired?.type == ParsedBankMessageType.SAVINGS_TRANSFER) {
-                    saveSavingsContribution(
+        val result = try {
+            when (pendingImport.type) {
+                ParsedBankMessageType.EXPENSE -> {
+                    writeImportedFinanceAction(
+                        type = pendingImport.type,
                         amount = amount,
                         currency = pendingImport.currency,
-                        description = paired.noteWithReviewContext(),
-                        occurredAtMillis = paired.occurredAtMillis,
+                        categoryId = pendingImport.suggestedCategoryId,
+                        description = pendingImport.noteWithReviewContext(),
+                        necessity = pendingImport.suggestedNecessity,
+                        occurredAtMillis = pendingImport.occurredAtMillis,
+                        senderName = pendingImport.senderName,
                         now = now
                     )
                 }
-                SaveResult.Saved(
-                    PendingBankImportSaveRules.internalTransferSavedMessage(
-                        pendingImport = pendingImport,
-                        latestDailyUseBalance = _uiState.value.data.latestDailyUseBalance
+                ParsedBankMessageType.INCOME -> {
+                    writeImportedFinanceAction(
+                        type = pendingImport.type,
+                        amount = amount,
+                        currency = pendingImport.currency,
+                        categoryId = pendingImport.suggestedCategoryId,
+                        description = pendingImport.noteWithReviewContext(),
+                        necessity = pendingImport.suggestedNecessity,
+                        occurredAtMillis = pendingImport.occurredAtMillis,
+                        senderName = pendingImport.senderName,
+                        now = now
                     )
-                )
+                }
+                ParsedBankMessageType.SAVINGS_TRANSFER -> {
+                    saveSavingsContribution(
+                        amount = amount,
+                        currency = pendingImport.currency,
+                        description = pendingImport.noteWithReviewContext(),
+                        occurredAtMillis = pendingImport.occurredAtMillis,
+                        now = now
+                    )
+                    if (paired?.type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT) {
+                        financeRepository.upsertInternalTransferRecord(
+                            PendingBankImportSaveRules.internalTransferRecord(
+                                debitImport = paired,
+                                pairedCreditImport = pendingImport,
+                                nowMillis = now
+                            )
+                        )
+                    }
+                    SaveResult.Saved(
+                        if (isPairedTransfer) {
+                            PendingBankImportSaveRules.pairedInternalTransferSavedMessage()
+                        } else {
+                            PendingBankImportSaveRules.savingsTransferSavedMessage(pendingImport)
+                        }
+                    )
+                }
+                ParsedBankMessageType.INTERNAL_TRANSFER_OUT -> {
+                    financeRepository.upsertInternalTransferRecord(
+                        PendingBankImportSaveRules.internalTransferRecord(
+                            debitImport = pendingImport,
+                            pairedCreditImport = paired?.takeIf { it.type == ParsedBankMessageType.SAVINGS_TRANSFER },
+                            nowMillis = now
+                        )
+                    )
+                    if (paired?.type == ParsedBankMessageType.SAVINGS_TRANSFER) {
+                        saveSavingsContribution(
+                            amount = amount,
+                            currency = pendingImport.currency,
+                            description = paired.noteWithReviewContext(),
+                            occurredAtMillis = paired.occurredAtMillis,
+                            now = now
+                        )
+                    }
+                    SaveResult.Saved(
+                        if (isPairedTransfer) {
+                            PendingBankImportSaveRules.pairedInternalTransferSavedMessage()
+                        } else {
+                            PendingBankImportSaveRules.internalTransferSavedMessage(
+                                pendingImport = pendingImport,
+                                latestDailyUseBalance = _uiState.value.data.latestDailyUseBalance
+                            )
+                        }
+                    )
+                }
+                ParsedBankMessageType.INFORMATIONAL ->
+                    SaveResult.Ignored("This message is informational and was not saved as a transaction.")
+                ParsedBankMessageType.UNKNOWN ->
+                    SaveResult.NeedsReview("Choose a message type before saving.")
             }
-            ParsedBankMessageType.INFORMATIONAL ->
-                SaveResult.Ignored("This message is informational and was not saved as a transaction.")
-            ParsedBankMessageType.UNKNOWN ->
-                SaveResult.NeedsReview("Choose a message type before saving.")
+        } catch (error: Throwable) {
+            return if (isPairedTransfer) {
+                SaveResult.Error("Could not save paired transfer: ${error.friendlyFinanceMessage()}")
+            } else {
+                SaveResult.Error(error.friendlyFinanceMessage())
+            }
         }
 
         if (result is SaveResult.Saved) {
@@ -700,29 +719,27 @@ class FinanceViewModel(
                 upsertBalanceSnapshotIfPresent(paired, now)
             }
             learnMerchantRuleIfNeeded(pendingImport)
-            financeRepository.deletePendingBankImport(pendingImport.id)
-            financeRepository.upsertBankMessageImportHistory(
-                BankMessageImportHistory(
-                    messageHash = pendingImport.messageHash,
-                    status = BankMessageImportStatus.SAVED,
-                    senderName = pendingImport.senderName,
-                    updatedAtMillis = now
-                )
-            )
+            val idsToRemove = PendingBankImportSaveRules.idsToRemoveAfterSuccessfulSave(pendingImport, paired)
+            idsToRemove.forEach { financeRepository.deletePendingBankImport(it) }
+            financeRepository.upsertBankMessageImportHistory(savedHistory(pendingImport, now))
             if (paired != null) {
-                financeRepository.deletePendingBankImport(paired.id)
-                financeRepository.upsertBankMessageImportHistory(
-                    BankMessageImportHistory(
-                        messageHash = paired.messageHash,
-                        status = BankMessageImportStatus.LINKED,
-                        senderName = paired.senderName,
-                        updatedAtMillis = now
-                    )
-                )
+                financeRepository.upsertBankMessageImportHistory(savedHistory(paired, now, linked = true))
             }
         }
         return result
     }
+
+    private fun savedHistory(
+        pendingImport: PendingBankImport,
+        now: Long,
+        linked: Boolean = false
+    ): BankMessageImportHistory =
+        BankMessageImportHistory(
+            messageHash = pendingImport.messageHash,
+            status = if (linked) BankMessageImportStatus.LINKED else BankMessageImportStatus.SAVED,
+            senderName = pendingImport.senderName,
+            updatedAtMillis = now
+        )
 
     private suspend fun upsertBalanceSnapshotIfPresent(pendingImport: PendingBankImport, now: Long) {
         val availableBalance = pendingImport.availableBalance ?: return

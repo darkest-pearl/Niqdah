@@ -112,37 +112,47 @@ private class PendingBankImportNotificationHandler(
 
         val now = System.currentTimeMillis()
         val paired = findTransferCounterpart(db, pendingImport)
-        when (pendingImport.type) {
-            ParsedBankMessageType.EXPENSE -> saveExpense(db, pendingImport, amount, now)
-            ParsedBankMessageType.INCOME -> saveIncome(db, pendingImport, amount, now)
-            ParsedBankMessageType.SAVINGS_TRANSFER -> {
-                saveSavingsContribution(db, pendingImport, amount, now)
-                if (paired?.type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT) {
-                    saveInternalTransferRecord(db, paired, pendingImport, now)
+        val isPairedTransfer = PendingBankImportSaveRules.isMatchedInternalTransferPair(pendingImport, paired)
+        try {
+            when (pendingImport.type) {
+                ParsedBankMessageType.EXPENSE -> saveExpense(db, pendingImport, amount, now)
+                ParsedBankMessageType.INCOME -> saveIncome(db, pendingImport, amount, now)
+                ParsedBankMessageType.SAVINGS_TRANSFER -> {
+                    saveSavingsContribution(db, pendingImport, amount, now)
+                    if (paired?.type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT) {
+                        saveInternalTransferRecord(db, paired, pendingImport, now)
+                    }
                 }
-            }
-            ParsedBankMessageType.INTERNAL_TRANSFER_OUT -> {
-                saveInternalTransferRecord(
-                    db = db,
-                    debitImport = pendingImport,
-                    pairedCreditImport = paired?.takeIf { it.type == ParsedBankMessageType.SAVINGS_TRANSFER },
-                    now = now
-                )
-                if (paired?.type == ParsedBankMessageType.SAVINGS_TRANSFER) {
-                    saveSavingsContribution(db, paired, amount, now)
+                ParsedBankMessageType.INTERNAL_TRANSFER_OUT -> {
+                    saveInternalTransferRecord(
+                        db = db,
+                        debitImport = pendingImport,
+                        pairedCreditImport = paired?.takeIf { it.type == ParsedBankMessageType.SAVINGS_TRANSFER },
+                        now = now
+                    )
+                    if (paired?.type == ParsedBankMessageType.SAVINGS_TRANSFER) {
+                        saveSavingsContribution(db, paired, amount, now)
+                    }
                 }
+                ParsedBankMessageType.INFORMATIONAL,
+                ParsedBankMessageType.UNKNOWN ->
+                    return SaveResult.NeedsReview("Choose a message type before saving.")
             }
-            ParsedBankMessageType.INFORMATIONAL,
-            ParsedBankMessageType.UNKNOWN ->
-                return SaveResult.NeedsReview("Choose a message type before saving.")
+        } catch (error: Throwable) {
+            return if (isPairedTransfer) {
+                SaveResult.Error("Could not save paired transfer: ${error.message?.takeIf { it.isNotBlank() } ?: "Unknown error"}")
+            } else {
+                SaveResult.Error(error.message?.takeIf { it.isNotBlank() } ?: "Could not save import.")
+            }
         }
         upsertBalanceSnapshotIfPresent(db, pendingImport, now)
         if (paired != null) {
             upsertBalanceSnapshotIfPresent(db, paired, now)
         }
-        pendingBankImportsCollection(db).document(pendingImport.id).delete().awaitValue()
+        PendingBankImportSaveRules.idsToRemoveAfterSuccessfulSave(pendingImport, paired).forEach { id ->
+            pendingBankImportsCollection(db).document(id).delete().awaitValue()
+        }
         if (paired != null) {
-            pendingBankImportsCollection(db).document(paired.id).delete().awaitValue()
             bankMessageImportHistoryCollection(db)
                 .document(paired.messageHash)
                 .set(
@@ -166,7 +176,7 @@ private class PendingBankImportNotificationHandler(
                 ).toFirestore()
             )
             .awaitValue()
-        return SaveResult.Saved(pendingImport.saveSuccessMessage(db))
+        return SaveResult.Saved(pendingImport.saveSuccessMessage(db, paired))
     }
 
     suspend fun dismiss(importId: String): Boolean {
@@ -544,8 +554,13 @@ private class PendingBankImportNotificationHandler(
             .distinct()
             .joinToString("\n")
 
-    private suspend fun PendingBankImport.saveSuccessMessage(db: FirebaseFirestore): String =
+    private suspend fun PendingBankImport.saveSuccessMessage(
+        db: FirebaseFirestore,
+        paired: PendingBankImport?
+    ): String =
         when {
+            PendingBankImportSaveRules.isMatchedInternalTransferPair(this, paired) ->
+                PendingBankImportSaveRules.pairedInternalTransferSavedMessage()
             type == ParsedBankMessageType.SAVINGS_TRANSFER ->
                 PendingBankImportSaveRules.savingsTransferSavedMessage(this)
             type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT ->

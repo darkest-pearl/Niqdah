@@ -42,6 +42,22 @@ object PendingBankImportSaveRules {
         }
     }
 
+    fun isMatchedInternalTransferPair(
+        pendingImport: PendingBankImport,
+        pairedImport: PendingBankImport?
+    ): Boolean =
+        pairedImport != null &&
+            setOf(pendingImport.type, pairedImport.type) == setOf(
+                ParsedBankMessageType.SAVINGS_TRANSFER,
+                ParsedBankMessageType.INTERNAL_TRANSFER_OUT
+            )
+
+    fun idsToRemoveAfterSuccessfulSave(
+        pendingImport: PendingBankImport,
+        pairedImport: PendingBankImport?
+    ): List<String> =
+        listOfNotNull(pendingImport.id, pairedImport?.id).distinct()
+
     fun internalTransferRecord(
         debitImport: PendingBankImport,
         pairedCreditImport: PendingBankImport?,
@@ -87,15 +103,17 @@ object PendingBankImportSaveRules {
         return when {
             notificationStyle -> "Internal transfer saved. Balance may be outdated."
             recordedBalanceMayBeOutdated -> "Saved. Your recorded balance may be outdated."
-            pendingImport.availableBalance == null ->
-                "Saved. Balance was not updated because this SMS did not include available balance."
+            pendingImport.availableBalance == null -> "Internal transfer saved. Waiting for matching credit."
             else -> "Saved successfully."
         }
     }
 
+    fun pairedInternalTransferSavedMessage(): String =
+        "Paired internal transfer saved. Savings contribution recorded."
+
     fun savingsTransferSavedMessage(pendingImport: PendingBankImport): String =
         if (pendingImport.availableBalance == null) {
-            "Saved transfer. Savings balance was not updated because this SMS did not include an available balance."
+            "Savings transfer saved. Debit side was not found."
         } else {
             "Saved successfully."
         }

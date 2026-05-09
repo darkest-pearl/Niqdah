@@ -59,10 +59,12 @@ class BankSmsImportProcessor(
         }
 
         val hash = BankMessageImportRules.hashFor(senderName, messageBody, receivedAtMillis)
-        if (pendingBankImportsCollection(db).document(hash).get().awaitValue().exists() ||
-            bankMessageImportHistoryCollection(db).document(hash).get().awaitValue().exists()
-        ) {
+        if (pendingBankImportsCollection(db).document(hash).get().awaitValue().exists()) {
             return SmsImportProcessResult.Duplicate
+        }
+        val historySnapshot = bankMessageImportHistoryCollection(db).document(hash).get().awaitValue()
+        val historyStatus = historySnapshot.getString("status")?.let { value ->
+            BankMessageImportStatus.entries.firstOrNull { it.name == value }
         }
 
         val categories = fetchCategories(db)
@@ -80,6 +82,11 @@ class BankSmsImportProcessor(
             merchantRules = merchantRules,
             nowMillis = now
         )
+
+        val hasSavedMatchingRecord = hasSavedMatchingRecord(db, pendingImport)
+        if (!BankMessageImportRules.shouldAllowReimport(historyStatus, hasSavedMatchingRecord)) {
+            return SmsImportProcessResult.Duplicate
+        }
 
         if (pendingImport.type == ParsedBankMessageType.INFORMATIONAL) {
             bankMessageImportHistoryCollection(db)
@@ -221,6 +228,26 @@ class BankSmsImportProcessor(
                 )
             }
 
+    private suspend fun hasSavedMatchingRecord(
+        db: FirebaseFirestore,
+        pendingImport: PendingBankImport
+    ): Boolean {
+        if (pendingImport.type != ParsedBankMessageType.INTERNAL_TRANSFER_OUT &&
+            pendingImport.type != ParsedBankMessageType.SAVINGS_TRANSFER
+        ) {
+            return true
+        }
+        return internalTransferRecordsCollection(db)
+            .get()
+            .awaitValue()
+            .documents
+            .any { snapshot ->
+                snapshot.getString("sourceMessageHash") == pendingImport.messageHash ||
+                    snapshot.getString("pairedImportId") == pendingImport.id ||
+                    snapshot.getString("pairedImportId") == pendingImport.messageHash
+            }
+    }
+
     private fun showReviewNotification(pendingImport: PendingBankImport) {
         if (!canPostNotifications()) return
 
@@ -323,6 +350,9 @@ class BankSmsImportProcessor(
 
     private fun accountBalanceSnapshotsCollection(db: FirebaseFirestore) =
         userDocument(db).collection(FirestoreCollections.ACCOUNT_BALANCE_SNAPSHOTS)
+
+    private fun internalTransferRecordsCollection(db: FirebaseFirestore) =
+        userDocument(db).collection(FirestoreCollections.INTERNAL_TRANSFER_RECORDS)
 
     private fun sourceSettings(
         value: Map<String, Any>?,

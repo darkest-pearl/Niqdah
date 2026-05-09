@@ -38,7 +38,7 @@ class PendingBankImportSaveRulesTest {
         assertEquals(before.totalSpent, after.totalSpent, 0.001)
         assertEquals(before.totalMonthlyIncome, after.totalMonthlyIncome, 0.001)
         assertEquals(
-            "Saved. Balance was not updated because this SMS did not include available balance.",
+            "Internal transfer saved. Waiting for matching credit.",
             PendingBankImportSaveRules.internalTransferSavedMessage(pending, latestDailyUseBalance = null)
         )
     }
@@ -72,7 +72,7 @@ class PendingBankImportSaveRulesTest {
     }
 
     @Test
-    fun debitAndCreditPairCreatesOnePairedRecordAndOneSavingsContribution() {
+    fun debitAndCreditPairCreatesOnePairedRecordAndOneSavingsContributionWhenSavingDebitFirst() {
         val debit = debitPendingImport()
         val credit = creditPendingImport()
         val paired = PendingBankImportSaveRules.findMatchingTransferCounterpart(
@@ -101,9 +101,82 @@ class PendingBankImportSaveRulesTest {
         assertEquals(credit.id, paired?.id)
         assertEquals(InternalTransferStatus.PAIRED, record.status)
         assertEquals("4146", record.targetAccountSuffix)
+        assertEquals(listOf(debit.id, credit.id), PendingBankImportSaveRules.idsToRemoveAfterSuccessfulSave(debit, paired))
+        assertEquals(
+            "Paired internal transfer saved. Savings contribution recorded.",
+            PendingBankImportSaveRules.pairedInternalTransferSavedMessage()
+        )
         assertEquals(0.0, dashboard.totalSpent, 0.001)
         assertEquals(5_500.0, dashboard.totalMonthlyIncome, 0.001)
         assertEquals(1_000.0 / 1_700.0, dashboard.savingsTargetProgress, 0.001)
+    }
+
+    @Test
+    fun debitAndCreditPairCreatesSamePlanWhenSavingCreditFirst() {
+        val debit = debitPendingImport()
+        val credit = creditPendingImport()
+        val paired = PendingBankImportSaveRules.findMatchingTransferCounterpart(
+            pendingImport = credit,
+            candidates = listOf(debit, credit)
+        )
+        val record = PendingBankImportSaveRules.internalTransferRecord(
+            debitImport = paired ?: error("Missing debit pair"),
+            pairedCreditImport = credit,
+            nowMillis = occurredAt
+        )
+
+        assertEquals(debit.id, paired.id)
+        assertEquals(InternalTransferStatus.PAIRED, record.status)
+        assertEquals("4052", record.sourceAccountSuffix)
+        assertEquals("4146", record.targetAccountSuffix)
+        assertEquals(listOf(credit.id, debit.id), PendingBankImportSaveRules.idsToRemoveAfterSuccessfulSave(credit, paired))
+    }
+
+    @Test
+    fun duplicateReimportIsAllowedForStalePendingOrLinkedHistoryWithoutSavedRecord() {
+        assertTrue(
+            BankMessageImportRules.shouldAllowReimport(
+                historyStatus = BankMessageImportStatus.PENDING,
+                hasSavedMatchingRecord = false
+            )
+        )
+        assertTrue(
+            BankMessageImportRules.shouldAllowReimport(
+                historyStatus = BankMessageImportStatus.LINKED,
+                hasSavedMatchingRecord = false
+            )
+        )
+        assertEquals(
+            false,
+            BankMessageImportRules.shouldAllowReimport(
+                historyStatus = BankMessageImportStatus.LINKED,
+                hasSavedMatchingRecord = true
+            )
+        )
+    }
+
+    @Test
+    fun creditAloneSavesAsSavingsTransferNotIncome() {
+        val credit = creditPendingImport()
+        val dashboard = dashboardWith(
+            transactions = listOf(
+                ExpenseTransaction(
+                    id = "bank-message-savings-2027-01",
+                    categoryId = FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID,
+                    amount = 1_000.0,
+                    currency = "AED",
+                    occurredAtMillis = occurredAt,
+                    yearMonth = FinanceDates.yearMonthFromMillis(occurredAt)
+                )
+            ),
+            incomeTransactions = emptyList(),
+            internalTransferRecords = emptyList()
+        )
+
+        assertEquals(ParsedBankMessageType.SAVINGS_TRANSFER, credit.type)
+        assertEquals("Savings transfer saved. Debit side was not found.", PendingBankImportSaveRules.savingsTransferSavedMessage(credit))
+        assertEquals(0.0, dashboard.totalSpent, 0.001)
+        assertEquals(5_500.0, dashboard.totalMonthlyIncome, 0.001)
     }
 
     @Test

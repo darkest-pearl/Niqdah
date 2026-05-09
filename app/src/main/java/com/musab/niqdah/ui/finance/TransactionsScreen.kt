@@ -52,6 +52,7 @@ import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.ParsedBankMessage
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
+import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
 
 private sealed interface TransactionTimelineItem {
     val key: String
@@ -163,8 +164,13 @@ fun TransactionsScreen(
                 Text(text = "Pending Bank Imports", style = MaterialTheme.typography.titleLarge)
             }
             items(uiState.data.pendingBankImports, key = { it.id }) { pendingImport ->
+                val hasMatchedPair = PendingBankImportSaveRules.findMatchingTransferCounterpart(
+                    pendingImport = pendingImport,
+                    candidates = uiState.data.pendingBankImports
+                ) != null
                 PendingBankImportCard(
                     pendingImport = pendingImport,
+                    hasMatchedPair = hasMatchedPair,
                     categories = categories,
                     isSaving = uiState.isSaving,
                     onSave = onSavePendingBankImport,
@@ -463,6 +469,7 @@ private fun InternalTransferRecordCard(
 @Composable
 private fun PendingBankImportCard(
     pendingImport: PendingBankImport,
+    hasMatchedPair: Boolean,
     categories: List<BudgetCategory>,
     isSaving: Boolean,
     onSave: (PendingBankImport) -> Unit,
@@ -488,6 +495,14 @@ private fun PendingBankImportCard(
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
             PendingImportLine("Type", pendingImport.type.label)
+            if (hasMatchedPair) {
+                Text(
+                    text = "Matched pair available",
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
             PendingImportLine(
                 "Amount",
                 pendingImport.amount?.let { formatMoney(it, pendingImport.currency) } ?: "Missing"
@@ -552,7 +567,13 @@ private fun PendingBankImportCard(
                     enabled = !isSaving,
                     onClick = { onSave(pendingImport) }
                 ) {
-                    Text(if (isSaving) "Saving..." else "Save")
+                    Text(
+                        when {
+                            isSaving -> "Saving..."
+                            hasMatchedPair -> "Save paired transfer"
+                            else -> "Save"
+                        }
+                    )
                 }
                 OutlinedButton(
                     modifier = Modifier.weight(1f),

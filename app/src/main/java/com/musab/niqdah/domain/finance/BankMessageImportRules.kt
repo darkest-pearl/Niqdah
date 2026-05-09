@@ -30,6 +30,19 @@ object BankMessageImportRules {
         return digest.joinToString("") { "%02x".format(it) }
     }
 
+    fun shouldAllowReimport(
+        historyStatus: BankMessageImportStatus?,
+        hasSavedMatchingRecord: Boolean
+    ): Boolean =
+        when (historyStatus) {
+            null -> true
+            BankMessageImportStatus.PENDING -> true
+            BankMessageImportStatus.SAVED,
+            BankMessageImportStatus.LINKED -> !hasSavedMatchingRecord
+            BankMessageImportStatus.DISMISSED,
+            BankMessageImportStatus.IGNORED -> false
+        }
+
     private fun String.normalizedSenderToken(): String =
         trim()
             .lowercase(Locale.US)
