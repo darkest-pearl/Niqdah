@@ -122,7 +122,22 @@ fun MainShell(
                 chatUiState = aiChatUiState,
                 financeUiState = financeUiState,
                 padding = padding,
-                onSendMessage = aiChatViewModel::sendMessage,
+                onSendMessage = { text, state ->
+                    aiChatViewModel.sendMessage(
+                        text = text,
+                        financeUiState = state,
+                        draftActionFactory = financeViewModel::previewAiFinanceDraftAction
+                    )
+                },
+                onSaveDraft = { messageId, draftAction ->
+                    financeViewModel.saveAiFinanceDraftAction(
+                        draft = draftAction,
+                        onSuccess = { aiChatViewModel.markDraftActionSaved(messageId) },
+                        onFailure = { message -> aiChatViewModel.setDraftActionError(messageId, message) }
+                    )
+                },
+                onUpdateDraft = aiChatViewModel::updateDraftAction,
+                onCancelDraft = aiChatViewModel::cancelDraftAction,
                 onClearError = aiChatViewModel::clearError
             )
             ShellDestination.Settings -> SettingsScreen(

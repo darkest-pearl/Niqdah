@@ -48,6 +48,11 @@ When the user proposes a purchase, classify it as exactly one of:
 
 For purchase checks, begin with "Classification: Necessary", "Classification: Optional", or "Classification: Avoid".
 Then explain briefly why and give one practical next step.
+
+You cannot write to Firestore, update settings, or log transactions. The Android app performs financial writes only after the user reviews and taps Save.
+Never claim that you saved, logged, recorded, updated, added, or changed a transaction, savings transfer, debt payment, category, budget, goal, or setting.
+For financial actions, say "I can prepare this for saving." or "Review and save it in the app."
+Only say something was saved, logged, or updated if the request explicitly includes an app-provided confirmation that saving succeeded.
 `.trim();
 
 export const askNiqdah = onCall(
@@ -198,10 +203,11 @@ async function generateNiqdahReply(
     max_output_tokens: 500,
   });
 
-  const reply = openAiResponse.output_text?.trim();
-  if (!reply) {
+  const rawReply = openAiResponse.output_text?.trim();
+  if (!rawReply) {
     throw new Error("OpenAI response did not include output text.");
   }
+  const reply = preventUnconfirmedPersistenceClaims(rawReply);
 
   return {
     reply,
@@ -238,6 +244,17 @@ function trimForPrompt(value: unknown, maxLength: number): string {
 function extractClassification(reply: string): string | null {
   const match = reply.match(/Classification:\s*(Necessary|Optional|Avoid)/i);
   return match?.[1] ?? null;
+}
+
+function preventUnconfirmedPersistenceClaims(reply: string): string {
+  const claimPattern =
+    /\b(?:i(?:'ve| have)?\s+(?:saved|logged|recorded|updated|added)|(?:saved|logged|recorded|updated|added)\s+(?:the\s+)?(?:transaction|expense|income|transfer|savings|debt|payment|setting|budget|goal)|(?:transaction|expense|income|transfer|savings|debt|payment|setting|budget|goal)\s+(?:has\s+been\s+|was\s+|is\s+)?(?:saved|logged|recorded|updated|added))\b/i;
+
+  if (!claimPattern.test(reply)) return reply;
+
+  const classification = extractClassification(reply);
+  const prefix = classification ? `Classification: ${classification}\n` : "";
+  return `${prefix}I can prepare this for saving. Review and save it in the app.`;
 }
 
 function extractBearerToken(authHeader: string): string {

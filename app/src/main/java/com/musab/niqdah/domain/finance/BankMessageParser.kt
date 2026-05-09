@@ -21,9 +21,9 @@ class BankMessageParser {
         val senderName = manualSenderName.trim().ifBlank { extractSender(rawMessage) }
         val sourceType = resolveSourceType(senderName, compactMessage, settings)
         val canUseDaily = settings.dailyUseSource.isEnabled &&
-            (sourceType == BankMessageSourceType.DAILY_USE || settings.dailyUseSource.senderName.isBlank())
+            (sourceType == BankMessageSourceType.DAILY_USE || sourceType == BankMessageSourceType.UNKNOWN)
         val canUseSavings = settings.savingsSource.isEnabled &&
-            (sourceType == BankMessageSourceType.SAVINGS || settings.savingsSource.senderName.isBlank())
+            (sourceType == BankMessageSourceType.SAVINGS || sourceType == BankMessageSourceType.UNKNOWN)
         val hasSavingsTransfer = compactMessage.containsAny(settings.savingsTransferKeywords)
         val hasDebit = compactMessage.containsAny(settings.debitKeywords)
         val hasCredit = compactMessage.containsAny(settings.creditKeywords)
@@ -232,7 +232,7 @@ class BankMessageParser {
             ),
             CategoryRule(
                 id = FinanceDefaults.FIANCEE_CATEGORY_ID,
-                keywords = listOf("fiancee", "fiancée", "fiance", "bride"),
+                keywords = listOf("fiancee", "fiance", "bride"),
                 necessity = NecessityLevel.OPTIONAL
             ),
             CategoryRule(

@@ -8,7 +8,9 @@ object FinanceCalculator {
         val monthIncomeTransactions = data.incomeTransactions.filter { it.yearMonth == yearMonth }
         val categoryById = data.categories.associateBy { it.id }
         val totalIncome = data.profile.salary + data.profile.extraIncome + monthIncomeTransactions.sumOf { it.amount }
-        val totalSpent = monthTransactions.sumOf { it.amount }
+        val totalSpent = monthTransactions
+            .filter { transaction -> categoryById[transaction.categoryId]?.type != CategoryType.SAVINGS }
+            .sumOf { it.amount }
 
         val categorySpending = data.categories.map { category ->
             val spent = monthTransactions

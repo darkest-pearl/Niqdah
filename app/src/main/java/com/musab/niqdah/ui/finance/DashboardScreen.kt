@@ -66,7 +66,7 @@ fun DashboardScreen(
                 FinanceMetricCard(
                     title = "Total spent",
                     value = formatMoney(dashboard.totalSpent, currency),
-                    subtitle = "Manual transactions recorded this month."
+                    subtitle = "Expense transactions this month, excluding savings transfers."
                 )
             }
             item {

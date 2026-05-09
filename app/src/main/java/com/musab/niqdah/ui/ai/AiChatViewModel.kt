@@ -3,6 +3,7 @@ package com.musab.niqdah.ui.ai
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.musab.niqdah.domain.ai.AiFinanceDraftAction
 import com.musab.niqdah.domain.ai.AiChatMessage
 import com.musab.niqdah.domain.ai.AiChatRepository
 import com.musab.niqdah.domain.ai.AiChatRole
@@ -24,6 +25,9 @@ data class AiChatUiState(
             content = "Ask me if a purchase fits the January marriage plan, or ask for a quick budget adjustment."
         )
     ),
+    val draftActions: Map<String, AiFinanceDraftAction> = emptyMap(),
+    val savedDraftMessageIds: Set<String> = emptySet(),
+    val draftErrors: Map<String, String> = emptyMap(),
     val isSending: Boolean = false,
     val errorMessage: String? = null
 )
@@ -34,7 +38,11 @@ class AiChatViewModel(
     private val _uiState = MutableStateFlow(AiChatUiState())
     val uiState = _uiState.asStateFlow()
 
-    fun sendMessage(text: String, financeUiState: FinanceUiState) {
+    fun sendMessage(
+        text: String,
+        financeUiState: FinanceUiState,
+        draftActionFactory: (String) -> AiFinanceDraftAction?
+    ) {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return
         if (financeUiState.isLoading) {
@@ -50,6 +58,7 @@ class AiChatViewModel(
             content = trimmed
         )
         val history = _uiState.value.messages
+        val draftAction = draftActionFactory(trimmed)
 
         _uiState.update {
             it.copy(
@@ -69,13 +78,19 @@ class AiChatViewModel(
                 history = history,
                 context = context
             ).onSuccess { reply ->
+                val assistantMessage = AiChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    role = AiChatRole.ASSISTANT,
+                    content = reply
+                )
                 _uiState.update {
                     it.copy(
-                        messages = it.messages + AiChatMessage(
-                            id = UUID.randomUUID().toString(),
-                            role = AiChatRole.ASSISTANT,
-                            content = reply
-                        ),
+                        messages = it.messages + assistantMessage,
+                        draftActions = if (draftAction == null) {
+                            it.draftActions
+                        } else {
+                            it.draftActions + (assistantMessage.id to draftAction)
+                        },
                         isSending = false
                     )
                 }
@@ -92,6 +107,40 @@ class AiChatViewModel(
 
     fun clearError() {
         _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    fun updateDraftAction(messageId: String, draftAction: AiFinanceDraftAction) {
+        _uiState.update {
+            it.copy(
+                draftActions = it.draftActions + (messageId to draftAction),
+                draftErrors = it.draftErrors - messageId
+            )
+        }
+    }
+
+    fun cancelDraftAction(messageId: String) {
+        _uiState.update {
+            it.copy(
+                draftActions = it.draftActions - messageId,
+                savedDraftMessageIds = it.savedDraftMessageIds - messageId,
+                draftErrors = it.draftErrors - messageId
+            )
+        }
+    }
+
+    fun markDraftActionSaved(messageId: String) {
+        _uiState.update {
+            it.copy(
+                savedDraftMessageIds = it.savedDraftMessageIds + messageId,
+                draftErrors = it.draftErrors - messageId
+            )
+        }
+    }
+
+    fun setDraftActionError(messageId: String, message: String) {
+        _uiState.update {
+            it.copy(draftErrors = it.draftErrors + (messageId to message))
+        }
     }
 
     private fun Throwable.friendlyChatMessage(): String =

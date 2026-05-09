@@ -79,4 +79,21 @@ class BankMessageParserTest {
 
         assertEquals(ParsedBankMessageType.UNKNOWN, parsed.type)
     }
+
+    @Test
+    fun configuredDailySenderStillAllowsPastedDebitWithoutSender() {
+        val parsed = parser.parse(
+            rawMessage = "AED 42.50 debited at Burger King on 08/05/2026. Available balance AED 1,234.00",
+            manualSenderName = "",
+            settings = FinanceDefaults.bankMessageParserSettings().copy(
+                dailyUseSource = BankMessageSourceSettings(senderName = "DailyBank", isEnabled = true)
+            ),
+            categories = categories,
+            nowMillis = 1_800_000_000_000L
+        )
+
+        assertEquals(ParsedBankMessageType.EXPENSE, parsed.type)
+        assertEquals(42.50, parsed.amount ?: 0.0, 0.001)
+        assertEquals(FinanceDefaults.FOOD_TRANSPORT_CATEGORY_ID, parsed.suggestedCategoryId)
+    }
 }

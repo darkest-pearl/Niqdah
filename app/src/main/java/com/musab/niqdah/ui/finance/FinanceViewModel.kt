@@ -3,6 +3,7 @@ package com.musab.niqdah.ui.finance
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.musab.niqdah.domain.ai.AiFinanceDraftAction
 import com.musab.niqdah.domain.finance.BankMessageParser
 import com.musab.niqdah.domain.finance.BankMessageParserSettings
 import com.musab.niqdah.domain.finance.BankMessageSourceSettings
@@ -167,6 +168,12 @@ class FinanceViewModel(
         )
     }
 
+    fun previewAiFinanceDraftAction(messageInput: String): AiFinanceDraftAction? {
+        val parsed = previewBankMessage(senderInput = "", messageInput = messageInput)
+        if (parsed.amount == null && parsed.type == ParsedBankMessageType.UNKNOWN) return null
+        return parsed.toAiFinanceDraftAction()
+    }
+
     fun saveImportedBankMessage(
         type: ParsedBankMessageType,
         amountInput: String,
@@ -176,6 +183,51 @@ class FinanceViewModel(
         necessity: NecessityLevel,
         dateInput: String,
         senderName: String
+    ) {
+        saveImportedFinanceAction(
+            type = type,
+            amountInput = amountInput,
+            currencyInput = currencyInput,
+            categoryId = categoryId,
+            description = description,
+            necessity = necessity,
+            dateInput = dateInput,
+            senderName = senderName,
+            onSuccess = null,
+            onFailure = null
+        )
+    }
+
+    fun saveAiFinanceDraftAction(
+        draft: AiFinanceDraftAction,
+        onSuccess: () -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        saveImportedFinanceAction(
+            type = draft.type,
+            amountInput = draft.amount?.let { formatDraftAmount(it) }.orEmpty(),
+            currencyInput = draft.currency,
+            categoryId = draft.categoryId,
+            description = draft.description,
+            necessity = draft.necessity,
+            dateInput = draft.dateInput,
+            senderName = draft.senderName,
+            onSuccess = onSuccess,
+            onFailure = onFailure
+        )
+    }
+
+    private fun saveImportedFinanceAction(
+        type: ParsedBankMessageType,
+        amountInput: String,
+        currencyInput: String,
+        categoryId: String?,
+        description: String,
+        necessity: NecessityLevel,
+        dateInput: String,
+        senderName: String,
+        onSuccess: (() -> Unit)?,
+        onFailure: ((String) -> Unit)?
     ) {
         val amount = amountInput.toMoneyOrNull()
         val occurredAt = FinanceDates.parseDateInput(dateInput)
@@ -190,13 +242,14 @@ class FinanceViewModel(
 
         if (validationError != null) {
             _uiState.update { it.copy(errorMessage = validationError) }
+            onFailure?.invoke(validationError)
             return
         }
 
         val parsedAmount = amount ?: return
         val parsedOccurredAt = occurredAt ?: return
         val now = System.currentTimeMillis()
-        runSave {
+        runSave(onSuccess = onSuccess, onFailure = onFailure) {
             when (type) {
                 ParsedBankMessageType.EXPENSE -> {
                     financeRepository.upsertTransaction(
@@ -422,12 +475,19 @@ class FinanceViewModel(
         )
     }
 
-    private fun runSave(block: suspend () -> Unit) {
+    private fun runSave(
+        onSuccess: (() -> Unit)? = null,
+        onFailure: ((String) -> Unit)? = null,
+        block: suspend () -> Unit
+    ) {
         viewModelScope.launch {
             _uiState.update { it.copy(isSaving = true, errorMessage = null) }
             runCatching { block() }
+                .onSuccess { onSuccess?.invoke() }
                 .onFailure { error ->
-                    _uiState.update { it.copy(errorMessage = error.friendlyFinanceMessage()) }
+                    val message = error.friendlyFinanceMessage()
+                    _uiState.update { it.copy(errorMessage = message) }
+                    onFailure?.invoke(message)
                 }
             _uiState.update { it.copy(isSaving = false) }
         }
@@ -444,6 +504,24 @@ class FinanceViewModel(
 
     private fun savingsImportTransactionId(yearMonth: String): String =
         "bank-message-savings-$yearMonth"
+
+    private fun ParsedBankMessage.toAiFinanceDraftAction(): AiFinanceDraftAction =
+        AiFinanceDraftAction(
+            type = type,
+            amount = amount,
+            currency = currency.ifBlank { _uiState.value.data.profile.currency },
+            categoryId = suggestedCategoryId,
+            categoryName = suggestedCategoryName,
+            necessity = suggestedNecessity,
+            description = description,
+            dateInput = FinanceDates.dateInputFromMillis(occurredAtMillis),
+            confidence = confidence,
+            senderName = senderName,
+            originalText = rawMessage
+        )
+
+    private fun formatDraftAmount(amount: Double): String =
+        if (amount % 1.0 == 0.0) amount.toLong().toString() else amount.toString()
 
     private fun Throwable.friendlyFinanceMessage(): String =
         message?.takeIf { it.isNotBlank() }
