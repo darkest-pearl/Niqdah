@@ -93,6 +93,7 @@ data class FinanceData(
     val incomeTransactions: List<IncomeTransaction>,
     val pendingBankImports: List<PendingBankImport>,
     val accountBalanceSnapshots: List<AccountBalanceSnapshot>,
+    val internalTransferRecords: List<InternalTransferRecord>,
     val merchantRules: List<MerchantRule>,
     val goals: List<SavingsGoal>,
     val debt: DebtTracker,
@@ -124,6 +125,7 @@ data class FinanceData(
                 incomeTransactions = emptyList(),
                 pendingBankImports = emptyList(),
                 accountBalanceSnapshots = emptyList(),
+                internalTransferRecords = emptyList(),
                 merchantRules = emptyList(),
                 goals = emptyList(),
                 debt = FinanceDefaults.debtTracker(),
@@ -156,6 +158,35 @@ data class MerchantRule(
     val lastUpdatedMillis: Long,
     val timesConfirmed: Int = 1
 )
+
+data class InternalTransferRecord(
+    val id: String,
+    val amount: Double,
+    val currency: String,
+    val sourceAccountSuffix: String,
+    val targetAccountSuffix: String? = null,
+    val direction: InternalTransferDirection,
+    val transferType: InternalTransferType,
+    val status: InternalTransferStatus,
+    val pairedImportId: String? = null,
+    val createdAtMillis: Long,
+    val messageTimestampMillis: Long,
+    val note: String,
+    val sourceMessageHash: String
+)
+
+enum class InternalTransferDirection(val label: String) {
+    OUT("Out")
+}
+
+enum class InternalTransferType(val label: String) {
+    ACCOUNT_TO_ACCOUNT("Account to Account Transfer")
+}
+
+enum class InternalTransferStatus(val label: String) {
+    NEEDS_MATCHING_CREDIT("Needs matching credit"),
+    PAIRED("Paired")
+}
 
 data class BankMessageParserSettings(
     val dailyUseSource: BankMessageSourceSettings = BankMessageSourceSettings(),
@@ -271,6 +302,14 @@ enum class BankMessageImportStatus {
     DISMISSED,
     IGNORED,
     LINKED
+}
+
+sealed interface SaveResult {
+    data class Saved(val message: String) : SaveResult
+    data class NeedsReview(val message: String) : SaveResult
+    data class Blocked(val reason: String) : SaveResult
+    data class Ignored(val reason: String) : SaveResult
+    data class Error(val reason: String) : SaveResult
 }
 
 data class CategorySpend(

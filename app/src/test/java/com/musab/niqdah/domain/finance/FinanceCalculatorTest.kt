@@ -32,6 +32,7 @@ class FinanceCalculatorTest {
             incomeTransactions = emptyList(),
             pendingBankImports = emptyList(),
             accountBalanceSnapshots = emptyList(),
+            internalTransferRecords = emptyList(),
             merchantRules = emptyList(),
             goals = FinanceDefaults.savingsGoals(now = 0L),
             debt = FinanceDefaults.debtTracker(now = 0L),

@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.musab.niqdah.domain.ai.AiFinanceDraftAction
+import com.musab.niqdah.domain.finance.AccountBalanceSnapshot
+import com.musab.niqdah.domain.finance.AccountKind
 import com.musab.niqdah.domain.finance.BankMessageImportHistory
 import com.musab.niqdah.domain.finance.BankMessageImportStatus
 import com.musab.niqdah.domain.finance.BankMessageParser
@@ -19,11 +21,14 @@ import com.musab.niqdah.domain.finance.FinanceDates
 import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.FinanceRepository
 import com.musab.niqdah.domain.finance.IncomeTransaction
+import com.musab.niqdah.domain.finance.InternalTransferRecord
 import com.musab.niqdah.domain.finance.MerchantRule
 import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.ParsedBankMessage
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
+import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
+import com.musab.niqdah.domain.finance.SaveResult
 import com.musab.niqdah.domain.finance.SavingsGoal
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,10 +60,20 @@ data class FinanceUiState(
             emptyList()
         }
 
+    val filteredInternalTransferRecords: List<InternalTransferRecord>
+        get() = if (selectedTransactionCategoryId == null) {
+            data.internalTransferRecords.filter { record ->
+                FinanceDates.yearMonthFromMillis(record.messageTimestampMillis) == selectedTransactionMonth
+            }
+        } else {
+            emptyList()
+        }
+
     val availableMonths: List<String>
         get() = (
             data.transactions.map { it.yearMonth } +
                 data.incomeTransactions.map { it.yearMonth } +
+                data.internalTransferRecords.map { FinanceDates.yearMonthFromMillis(it.messageTimestampMillis) } +
                 FinanceDates.currentYearMonth()
             )
             .filter { it.isNotBlank() }
@@ -245,7 +260,8 @@ class FinanceViewModel(
         val currency = currencyInput.trim().uppercase(Locale.US).ifBlank { _uiState.value.data.profile.currency }
         val validationError = when {
             type == ParsedBankMessageType.UNKNOWN -> "Choose a message type before saving."
-            type == ParsedBankMessageType.INFORMATIONAL -> "This message looks informational, not a transaction."
+            type == ParsedBankMessageType.INFORMATIONAL ->
+                "This message is informational and was not saved as a transaction."
             amount == null || amount <= 0.0 -> "Enter a valid imported amount."
             occurredAt == null -> "Enter the import date as YYYY-MM-DD."
             type == ParsedBankMessageType.EXPENSE && categoryId.isNullOrBlank() -> "Choose a category."
@@ -261,8 +277,8 @@ class FinanceViewModel(
         val parsedAmount = amount ?: return
         val parsedOccurredAt = occurredAt ?: return
         val now = System.currentTimeMillis()
-        runSave(onSuccess = onSuccess, onFailure = onFailure) {
-            writeImportedFinanceAction(
+        runSaveResult(onSuccess = onSuccess, onFailure = onFailure) {
+            val result = writeImportedFinanceAction(
                 type = type,
                 amount = parsedAmount,
                 currency = currency,
@@ -273,61 +289,21 @@ class FinanceViewModel(
                 senderName = senderName,
                 now = now
             )
-            learnMerchantRuleFromInputs(
-                type = type,
-                merchantName = description,
-                categoryId = categoryId,
-                necessity = necessity
-            )
+            if (result is SaveResult.Saved) {
+                learnMerchantRuleFromInputs(
+                    type = type,
+                    merchantName = description,
+                    categoryId = categoryId,
+                    necessity = necessity
+                )
+            }
+            result
         }
     }
 
     fun savePendingBankImport(pendingImport: PendingBankImport) {
-        val amount = pendingImport.amount
-        val validationError = when {
-            pendingImport.type == ParsedBankMessageType.INFORMATIONAL ->
-                pendingImport.ignoredReason.ifBlank { "This message looks informational, not a transaction." }
-            pendingImport.type == ParsedBankMessageType.UNKNOWN -> "Choose a message type before saving."
-            amount == null || amount <= 0.0 -> "Enter a valid imported amount."
-            pendingImport.type == ParsedBankMessageType.EXPENSE &&
-                pendingImport.suggestedCategoryId.isNullOrBlank() -> "Choose a category."
-            else -> null
-        }
-
-        if (validationError != null) {
-            _uiState.update { it.copy(errorMessage = validationError) }
-            return
-        }
-
-        val parsedAmount = amount ?: return
         val now = System.currentTimeMillis()
-        runSave {
-            writeImportedFinanceAction(
-                type = pendingImport.type,
-                amount = parsedAmount,
-                currency = pendingImport.currency,
-                categoryId = pendingImport.suggestedCategoryId,
-                description = pendingImport.noteWithReviewContext(),
-                necessity = pendingImport.suggestedNecessity,
-                occurredAtMillis = pendingImport.occurredAtMillis,
-                senderName = pendingImport.senderName,
-                now = now
-            )
-            learnMerchantRuleIfNeeded(pendingImport)
-            pairMatchingInternalTransferIfNeeded(pendingImport, now)
-            financeRepository.deletePendingBankImport(pendingImport.id)
-            financeRepository.upsertBankMessageImportHistory(
-                BankMessageImportHistory(
-                    messageHash = pendingImport.messageHash,
-                    status = BankMessageImportStatus.SAVED,
-                    senderName = pendingImport.senderName,
-                    updatedAtMillis = now
-                )
-            )
-            _uiState.update {
-                it.copy(statusMessage = pendingImport.saveSuccessMessage(), errorMessage = null)
-            }
-        }
+        runSaveResult { savePendingBankImportResult(pendingImport, now) }
     }
 
     fun updatePendingBankImport(pendingImport: PendingBankImport) {
@@ -556,7 +532,7 @@ class FinanceViewModel(
         occurredAtMillis: Long,
         senderName: String,
         now: Long
-    ) {
+    ): SaveResult {
         when (type) {
             ParsedBankMessageType.EXPENSE -> {
                 financeRepository.upsertTransaction(
@@ -573,6 +549,7 @@ class FinanceViewModel(
                         updatedAtMillis = now
                     )
                 )
+                return SaveResult.Saved("Saved successfully.")
             }
             ParsedBankMessageType.INCOME -> {
                 financeRepository.upsertIncomeTransaction(
@@ -588,6 +565,7 @@ class FinanceViewModel(
                         updatedAtMillis = now
                     )
                 )
+                return SaveResult.Saved("Saved successfully.")
             }
             ParsedBankMessageType.SAVINGS_TRANSFER -> {
                 saveSavingsContribution(
@@ -597,19 +575,179 @@ class FinanceViewModel(
                     occurredAtMillis = occurredAtMillis,
                     now = now
                 )
+                return SaveResult.Saved("Saved successfully.")
             }
             ParsedBankMessageType.INTERNAL_TRANSFER_OUT -> {
-                saveSavingsContribution(
-                    amount = amount,
-                    currency = currency,
-                    description = description.trim().ifBlank { "Imported internal transfer" },
-                    occurredAtMillis = occurredAtMillis,
-                    now = now
+                financeRepository.upsertInternalTransferRecord(
+                    InternalTransferRecord(
+                        id = "manual-internal-transfer-${UUID.randomUUID()}",
+                        amount = amount,
+                        currency = currency,
+                        sourceAccountSuffix = "",
+                        targetAccountSuffix = null,
+                        direction = com.musab.niqdah.domain.finance.InternalTransferDirection.OUT,
+                        transferType = com.musab.niqdah.domain.finance.InternalTransferType.ACCOUNT_TO_ACCOUNT,
+                        status = com.musab.niqdah.domain.finance.InternalTransferStatus.NEEDS_MATCHING_CREDIT,
+                        pairedImportId = null,
+                        createdAtMillis = now,
+                        messageTimestampMillis = occurredAtMillis,
+                        note = listOf(
+                            "Not counted as spending.",
+                            description.trim().ifBlank { "Imported internal transfer" }
+                        ).distinct().joinToString("\n"),
+                        sourceMessageHash = ""
+                    )
+                )
+                return SaveResult.Saved(
+                    "Saved. Balance was not updated because this SMS did not include available balance."
                 )
             }
             ParsedBankMessageType.INFORMATIONAL,
-            ParsedBankMessageType.UNKNOWN -> Unit
+            ParsedBankMessageType.UNKNOWN -> return SaveResult.NeedsReview("Choose a message type before saving.")
         }
+    }
+
+    private suspend fun savePendingBankImportResult(
+        pendingImport: PendingBankImport,
+        now: Long
+    ): SaveResult {
+        PendingBankImportSaveRules.validate(pendingImport)?.let { return it }
+        val amount = pendingImport.amount ?: return SaveResult.Blocked("Enter a valid imported amount.")
+        val paired = PendingBankImportSaveRules.findMatchingTransferCounterpart(
+            pendingImport = pendingImport,
+            candidates = _uiState.value.data.pendingBankImports
+        )
+
+        val result = when (pendingImport.type) {
+            ParsedBankMessageType.EXPENSE -> {
+                writeImportedFinanceAction(
+                    type = pendingImport.type,
+                    amount = amount,
+                    currency = pendingImport.currency,
+                    categoryId = pendingImport.suggestedCategoryId,
+                    description = pendingImport.noteWithReviewContext(),
+                    necessity = pendingImport.suggestedNecessity,
+                    occurredAtMillis = pendingImport.occurredAtMillis,
+                    senderName = pendingImport.senderName,
+                    now = now
+                )
+            }
+            ParsedBankMessageType.INCOME -> {
+                writeImportedFinanceAction(
+                    type = pendingImport.type,
+                    amount = amount,
+                    currency = pendingImport.currency,
+                    categoryId = pendingImport.suggestedCategoryId,
+                    description = pendingImport.noteWithReviewContext(),
+                    necessity = pendingImport.suggestedNecessity,
+                    occurredAtMillis = pendingImport.occurredAtMillis,
+                    senderName = pendingImport.senderName,
+                    now = now
+                )
+            }
+            ParsedBankMessageType.SAVINGS_TRANSFER -> {
+                saveSavingsContribution(
+                    amount = amount,
+                    currency = pendingImport.currency,
+                    description = pendingImport.noteWithReviewContext(),
+                    occurredAtMillis = pendingImport.occurredAtMillis,
+                    now = now
+                )
+                if (paired?.type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT) {
+                    financeRepository.upsertInternalTransferRecord(
+                        PendingBankImportSaveRules.internalTransferRecord(
+                            debitImport = paired,
+                            pairedCreditImport = pendingImport,
+                            nowMillis = now
+                        )
+                    )
+                }
+                SaveResult.Saved(PendingBankImportSaveRules.savingsTransferSavedMessage(pendingImport))
+            }
+            ParsedBankMessageType.INTERNAL_TRANSFER_OUT -> {
+                financeRepository.upsertInternalTransferRecord(
+                    PendingBankImportSaveRules.internalTransferRecord(
+                        debitImport = pendingImport,
+                        pairedCreditImport = paired?.takeIf { it.type == ParsedBankMessageType.SAVINGS_TRANSFER },
+                        nowMillis = now
+                    )
+                )
+                if (paired?.type == ParsedBankMessageType.SAVINGS_TRANSFER) {
+                    saveSavingsContribution(
+                        amount = amount,
+                        currency = pendingImport.currency,
+                        description = paired.noteWithReviewContext(),
+                        occurredAtMillis = paired.occurredAtMillis,
+                        now = now
+                    )
+                }
+                SaveResult.Saved(
+                    PendingBankImportSaveRules.internalTransferSavedMessage(
+                        pendingImport = pendingImport,
+                        latestDailyUseBalance = _uiState.value.data.latestDailyUseBalance
+                    )
+                )
+            }
+            ParsedBankMessageType.INFORMATIONAL ->
+                SaveResult.Ignored("This message is informational and was not saved as a transaction.")
+            ParsedBankMessageType.UNKNOWN ->
+                SaveResult.NeedsReview("Choose a message type before saving.")
+        }
+
+        if (result is SaveResult.Saved) {
+            upsertBalanceSnapshotIfPresent(pendingImport, now)
+            if (paired != null) {
+                upsertBalanceSnapshotIfPresent(paired, now)
+            }
+            learnMerchantRuleIfNeeded(pendingImport)
+            financeRepository.deletePendingBankImport(pendingImport.id)
+            financeRepository.upsertBankMessageImportHistory(
+                BankMessageImportHistory(
+                    messageHash = pendingImport.messageHash,
+                    status = BankMessageImportStatus.SAVED,
+                    senderName = pendingImport.senderName,
+                    updatedAtMillis = now
+                )
+            )
+            if (paired != null) {
+                financeRepository.deletePendingBankImport(paired.id)
+                financeRepository.upsertBankMessageImportHistory(
+                    BankMessageImportHistory(
+                        messageHash = paired.messageHash,
+                        status = BankMessageImportStatus.LINKED,
+                        senderName = paired.senderName,
+                        updatedAtMillis = now
+                    )
+                )
+            }
+        }
+        return result
+    }
+
+    private suspend fun upsertBalanceSnapshotIfPresent(pendingImport: PendingBankImport, now: Long) {
+        val availableBalance = pendingImport.availableBalance ?: return
+        val accountKind = when (pendingImport.sourceType) {
+            com.musab.niqdah.domain.finance.BankMessageSourceType.DAILY_USE -> AccountKind.DAILY_USE
+            com.musab.niqdah.domain.finance.BankMessageSourceType.SAVINGS -> AccountKind.SAVINGS
+            com.musab.niqdah.domain.finance.BankMessageSourceType.UNKNOWN -> {
+                if (pendingImport.type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT) {
+                    AccountKind.DAILY_USE
+                } else {
+                    return
+                }
+            }
+        }
+        financeRepository.upsertAccountBalanceSnapshot(
+            AccountBalanceSnapshot(
+                accountKind = accountKind,
+                sender = pendingImport.senderName,
+                availableBalance = availableBalance,
+                currency = pendingImport.availableBalanceCurrency.ifBlank { pendingImport.currency },
+                messageTimestampMillis = pendingImport.occurredAtMillis,
+                sourceMessageHash = pendingImport.messageHash,
+                createdAtMillis = now
+            )
+        )
     }
 
     private fun runSave(
@@ -626,6 +764,41 @@ class FinanceViewModel(
                     _uiState.update { it.copy(errorMessage = message) }
                     onFailure?.invoke(message)
                 }
+            _uiState.update { it.copy(isSaving = false) }
+        }
+    }
+
+    private fun runSaveResult(
+        onSuccess: (() -> Unit)? = null,
+        onFailure: ((String) -> Unit)? = null,
+        block: suspend () -> SaveResult
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isSaving = true, errorMessage = null, statusMessage = null) }
+            val result = runCatching { block() }
+                .getOrElse { SaveResult.Error(it.friendlyFinanceMessage()) }
+            when (result) {
+                is SaveResult.Saved -> {
+                    _uiState.update { it.copy(statusMessage = result.message, errorMessage = null) }
+                    onSuccess?.invoke()
+                }
+                is SaveResult.NeedsReview -> {
+                    _uiState.update { it.copy(statusMessage = result.message, errorMessage = null) }
+                    onFailure?.invoke(result.message)
+                }
+                is SaveResult.Ignored -> {
+                    _uiState.update { it.copy(statusMessage = result.reason, errorMessage = null) }
+                    onFailure?.invoke(result.reason)
+                }
+                is SaveResult.Blocked -> {
+                    _uiState.update { it.copy(errorMessage = result.reason, statusMessage = null) }
+                    onFailure?.invoke(result.reason)
+                }
+                is SaveResult.Error -> {
+                    _uiState.update { it.copy(errorMessage = result.reason, statusMessage = null) }
+                    onFailure?.invoke(result.reason)
+                }
+            }
             _uiState.update { it.copy(isSaving = false) }
         }
     }

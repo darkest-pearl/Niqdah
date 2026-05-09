@@ -47,6 +47,7 @@ import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.FinanceDates
 import com.musab.niqdah.domain.finance.IncomeTransaction
+import com.musab.niqdah.domain.finance.InternalTransferRecord
 import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.ParsedBankMessage
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
@@ -64,6 +65,11 @@ private sealed interface TransactionTimelineItem {
     data class IncomeItem(val transaction: IncomeTransaction) : TransactionTimelineItem {
         override val key: String = "income-${transaction.id}"
         override val occurredAtMillis: Long = transaction.occurredAtMillis
+    }
+
+    data class InternalTransferItem(val record: InternalTransferRecord) : TransactionTimelineItem {
+        override val key: String = "internal-transfer-${record.id}"
+        override val occurredAtMillis: Long = record.messageTimestampMillis
     }
 }
 
@@ -90,7 +96,8 @@ fun TransactionsScreen(
     val currency = uiState.data.profile.currency
     val timelineItems = (
         uiState.filteredTransactions.map { TransactionTimelineItem.ExpenseItem(it) } +
-            uiState.filteredIncomeTransactions.map { TransactionTimelineItem.IncomeItem(it) }
+            uiState.filteredIncomeTransactions.map { TransactionTimelineItem.IncomeItem(it) } +
+            uiState.filteredInternalTransferRecords.map { TransactionTimelineItem.InternalTransferItem(it) }
         ).sortedByDescending { it.occurredAtMillis }
 
     LazyColumn(
@@ -192,6 +199,10 @@ fun TransactionsScreen(
                         transaction = item.transaction,
                         fallbackCurrency = currency,
                         onDelete = { onDeleteIncomeTransaction(item.transaction.id) }
+                    )
+                    is TransactionTimelineItem.InternalTransferItem -> InternalTransferRecordCard(
+                        record = item.record,
+                        fallbackCurrency = currency
                     )
                 }
             }
@@ -387,6 +398,64 @@ private fun IncomeTransactionCard(
                     Icon(imageVector = Icons.Rounded.Delete, contentDescription = "Delete income")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun InternalTransferRecordCard(
+    record: InternalTransferRecord,
+    fallbackCurrency: String
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Internal transfer out",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    Text(
+                        text = "${record.status.label} - ${formatTransactionDate(record.messageTimestampMillis)}",
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Text(
+                    text = formatMoney(record.amount, record.currency.ifBlank { fallbackCurrency }),
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            if (record.sourceAccountSuffix.isNotBlank()) {
+                Text(
+                    text = "Source account: *${record.sourceAccountSuffix}",
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+            record.targetAccountSuffix?.takeIf { it.isNotBlank() }?.let { suffix ->
+                Text(
+                    text = "Target account: *$suffix",
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+            Text(
+                text = record.note.ifBlank { "Not counted as spending." },
+                color = MaterialTheme.colorScheme.onTertiaryContainer
+            )
         }
     }
 }

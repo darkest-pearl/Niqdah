@@ -18,6 +18,8 @@ import com.musab.niqdah.MainActivity
 import com.musab.niqdah.R
 import com.musab.niqdah.core.firebase.FirebaseProvider
 import com.musab.niqdah.data.firestore.FirestoreCollections
+import com.musab.niqdah.domain.finance.AccountBalanceSnapshot
+import com.musab.niqdah.domain.finance.AccountKind
 import com.musab.niqdah.domain.finance.BankMessageImportHistory
 import com.musab.niqdah.domain.finance.BankMessageImportStatus
 import com.musab.niqdah.domain.finance.BankMessageSourceType
@@ -25,10 +27,13 @@ import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.FinanceDates
 import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.IncomeTransaction
+import com.musab.niqdah.domain.finance.InternalTransferRecord
 import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.ParsedBankMessageConfidence
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
+import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
+import com.musab.niqdah.domain.finance.SaveResult
 import com.musab.niqdah.domain.finance.SavingsGoal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,12 +70,10 @@ class BankSmsNotificationActionReceiver : BroadcastReceiver() {
                 when (action) {
                     BankSmsNotificationActions.ACTION_SAVE -> {
                         val result = handler.save(importId)
-                        if (result.saved) {
+                        if (result is SaveResult.Saved) {
                             appContext.cancelImportNotification(importId)
-                            appContext.showActionResultNotification(result.message)
-                        } else {
-                            appContext.showActionResultNotification(result.message)
                         }
+                        appContext.showActionResultNotification(result.notificationMessage())
                     }
                     BankSmsNotificationActions.ACTION_DISMISS -> {
                         if (handler.dismiss(importId)) {
@@ -95,32 +98,48 @@ private class PendingBankImportNotificationHandler(
 ) {
     private val appContext = context.applicationContext
 
-    suspend fun save(importId: String): SaveActionResult {
+    suspend fun save(importId: String): SaveResult {
         val db = FirebaseProvider.firestore(appContext)
-            ?: return SaveActionResult(false, "Could not save because Firebase is unavailable.")
+            ?: return SaveResult.Error("Firebase is unavailable.")
         val pendingImport = pendingBankImportsCollection(db)
             .document(importId)
             .get()
             .awaitValue()
             .toPendingBankImport()
-            ?: return SaveActionResult(false, "Could not save because the pending import no longer exists.")
-        val decision = BankSmsNotificationActionRules.saveDecision(pendingImport)
-        if (decision is BankSmsNotificationActionRules.SaveDecision.Blocked) {
-            return SaveActionResult(false, "Could not save because ${decision.reason}")
-        }
-        val amount = pendingImport.amount ?: return SaveActionResult(false, "Could not save because the amount is missing.")
+            ?: return SaveResult.Error("The pending import no longer exists.")
+        PendingBankImportSaveRules.validate(pendingImport)?.let { return it }
+        val amount = pendingImport.amount ?: return SaveResult.Blocked("The amount is missing.")
 
         val now = System.currentTimeMillis()
+        val paired = findTransferCounterpart(db, pendingImport)
         when (pendingImport.type) {
             ParsedBankMessageType.EXPENSE -> saveExpense(db, pendingImport, amount, now)
             ParsedBankMessageType.INCOME -> saveIncome(db, pendingImport, amount, now)
-            ParsedBankMessageType.SAVINGS_TRANSFER -> saveSavingsContribution(db, pendingImport, amount, now)
-            ParsedBankMessageType.INTERNAL_TRANSFER_OUT -> saveSavingsContribution(db, pendingImport, amount, now)
+            ParsedBankMessageType.SAVINGS_TRANSFER -> {
+                saveSavingsContribution(db, pendingImport, amount, now)
+                if (paired?.type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT) {
+                    saveInternalTransferRecord(db, paired, pendingImport, now)
+                }
+            }
+            ParsedBankMessageType.INTERNAL_TRANSFER_OUT -> {
+                saveInternalTransferRecord(
+                    db = db,
+                    debitImport = pendingImport,
+                    pairedCreditImport = paired?.takeIf { it.type == ParsedBankMessageType.SAVINGS_TRANSFER },
+                    now = now
+                )
+                if (paired?.type == ParsedBankMessageType.SAVINGS_TRANSFER) {
+                    saveSavingsContribution(db, paired, amount, now)
+                }
+            }
             ParsedBankMessageType.INFORMATIONAL,
             ParsedBankMessageType.UNKNOWN ->
-                return SaveActionResult(false, "Could not save because this message is not a transaction.")
+                return SaveResult.NeedsReview("Choose a message type before saving.")
         }
-        val paired = findTransferCounterpart(db, pendingImport)
+        upsertBalanceSnapshotIfPresent(db, pendingImport, now)
+        if (paired != null) {
+            upsertBalanceSnapshotIfPresent(db, paired, now)
+        }
         pendingBankImportsCollection(db).document(pendingImport.id).delete().awaitValue()
         if (paired != null) {
             pendingBankImportsCollection(db).document(paired.id).delete().awaitValue()
@@ -147,10 +166,7 @@ private class PendingBankImportNotificationHandler(
                 ).toFirestore()
             )
             .awaitValue()
-        return SaveActionResult(
-            saved = true,
-            message = pendingImport.saveSuccessMessage(paired != null)
-        )
+        return SaveResult.Saved(pendingImport.saveSuccessMessage(db))
     }
 
     suspend fun dismiss(importId: String): Boolean {
@@ -272,6 +288,67 @@ private class PendingBankImportNotificationHandler(
             .awaitValue()
     }
 
+    private suspend fun saveInternalTransferRecord(
+        db: FirebaseFirestore,
+        debitImport: PendingBankImport,
+        pairedCreditImport: PendingBankImport?,
+        now: Long
+    ) {
+        val record = PendingBankImportSaveRules.internalTransferRecord(
+            debitImport = debitImport,
+            pairedCreditImport = pairedCreditImport,
+            nowMillis = now
+        )
+        internalTransferRecordsCollection(db)
+            .document(record.id)
+            .set(record.toFirestore())
+            .awaitValue()
+    }
+
+    private suspend fun upsertBalanceSnapshotIfPresent(
+        db: FirebaseFirestore,
+        pendingImport: PendingBankImport,
+        now: Long
+    ) {
+        val availableBalance = pendingImport.availableBalance ?: return
+        val accountKind = when (pendingImport.sourceType) {
+            BankMessageSourceType.DAILY_USE -> AccountKind.DAILY_USE
+            BankMessageSourceType.SAVINGS -> AccountKind.SAVINGS
+            BankMessageSourceType.UNKNOWN -> {
+                if (pendingImport.type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT) {
+                    AccountKind.DAILY_USE
+                } else {
+                    return
+                }
+            }
+        }
+        val snapshot = AccountBalanceSnapshot(
+            accountKind = accountKind,
+            sender = pendingImport.senderName,
+            availableBalance = availableBalance,
+            currency = pendingImport.availableBalanceCurrency.ifBlank { pendingImport.currency },
+            messageTimestampMillis = pendingImport.occurredAtMillis,
+            sourceMessageHash = pendingImport.messageHash,
+            createdAtMillis = now
+        )
+        accountBalanceSnapshotsCollection(db)
+            .document(snapshot.documentId())
+            .set(snapshot.toFirestore())
+            .awaitValue()
+    }
+
+    private suspend fun latestDailyUseBalance(db: FirebaseFirestore): AccountBalanceSnapshot? =
+        accountBalanceSnapshotsCollection(db)
+            .get()
+            .awaitValue()
+            .documents
+            .mapNotNull { it.toAccountBalanceSnapshot() }
+            .filter { it.accountKind == AccountKind.DAILY_USE }
+            .maxWithOrNull(
+                compareBy<AccountBalanceSnapshot> { it.messageTimestampMillis }
+                    .thenBy { it.createdAtMillis }
+            )
+
     private suspend fun findTransferCounterpart(
         db: FirebaseFirestore,
         pendingImport: PendingBankImport
@@ -314,6 +391,12 @@ private class PendingBankImportNotificationHandler(
 
     private fun bankMessageImportHistoryCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.BANK_MESSAGE_IMPORT_HISTORY)
+
+    private fun accountBalanceSnapshotsCollection(db: FirebaseFirestore): CollectionReference =
+        userDocument(db).collection(FirestoreCollections.ACCOUNT_BALANCE_SNAPSHOTS)
+
+    private fun internalTransferRecordsCollection(db: FirebaseFirestore): CollectionReference =
+        userDocument(db).collection(FirestoreCollections.INTERNAL_TRANSFER_RECORDS)
 
     private fun goalsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.SAVINGS_GOALS)
@@ -405,6 +488,33 @@ private class PendingBankImportNotificationHandler(
             "updatedAtMillis" to updatedAtMillis
         )
 
+    private fun AccountBalanceSnapshot.toFirestore(): Map<String, Any> =
+        mapOf(
+            "accountKind" to accountKind.name,
+            "sender" to sender,
+            "availableBalance" to availableBalance,
+            "currency" to currency,
+            "messageTimestampMillis" to messageTimestampMillis,
+            "sourceMessageHash" to sourceMessageHash,
+            "createdAtMillis" to createdAtMillis
+        )
+
+    private fun InternalTransferRecord.toFirestore(): Map<String, Any?> =
+        mapOf(
+            "amount" to amount,
+            "currency" to currency,
+            "sourceAccountSuffix" to sourceAccountSuffix,
+            "targetAccountSuffix" to targetAccountSuffix,
+            "direction" to direction.name,
+            "transferType" to transferType.name,
+            "status" to status.name,
+            "pairedImportId" to pairedImportId,
+            "createdAtMillis" to createdAtMillis,
+            "messageTimestampMillis" to messageTimestampMillis,
+            "note" to note,
+            "sourceMessageHash" to sourceMessageHash
+        )
+
     private fun SavingsGoal.toFirestore(): Map<String, Any> =
         mapOf(
             "name" to name,
@@ -414,20 +524,41 @@ private class PendingBankImportNotificationHandler(
             "updatedAtMillis" to updatedAtMillis
         )
 
+    private fun DocumentSnapshot.toAccountBalanceSnapshot(): AccountBalanceSnapshot? {
+        val accountKind = AccountKind.entries.firstOrNull { it.name == getString("accountKind") }
+            ?: return null
+        return AccountBalanceSnapshot(
+            accountKind = accountKind,
+            sender = getString("sender") ?: "",
+            availableBalance = nullableDouble("availableBalance") ?: 0.0,
+            currency = getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
+            messageTimestampMillis = long("messageTimestampMillis"),
+            sourceMessageHash = getString("sourceMessageHash") ?: id.substringAfter("-", id),
+            createdAtMillis = long("createdAtMillis")
+        )
+    }
+
     private fun PendingBankImport.noteWithReviewContext(): String =
         listOf(description.trim(), reviewNote.trim())
             .filter { it.isNotBlank() }
             .distinct()
             .joinToString("\n")
 
-    private fun PendingBankImport.saveSuccessMessage(wasPaired: Boolean): String =
+    private suspend fun PendingBankImport.saveSuccessMessage(db: FirebaseFirestore): String =
         when {
-            type == ParsedBankMessageType.SAVINGS_TRANSFER && availableBalance == null ->
-                "Saved transfer. Savings balance was not updated because this SMS did not include an available balance."
-            type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT && wasPaired ->
-                "Saved to Niqdah. Paired with matching savings credit."
+            type == ParsedBankMessageType.SAVINGS_TRANSFER ->
+                PendingBankImportSaveRules.savingsTransferSavedMessage(this)
+            type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT ->
+                PendingBankImportSaveRules.internalTransferSavedMessage(
+                    pendingImport = this,
+                    latestDailyUseBalance = latestDailyUseBalance(db),
+                    notificationStyle = true
+                )
             else -> "Saved to Niqdah."
         }
+
+    private fun AccountBalanceSnapshot.documentId(): String =
+        "${accountKind.name}-$sourceMessageHash"
 
     private fun DocumentSnapshot.nullableDouble(field: String): Double? =
         (get(field) as? Number)?.toDouble()
@@ -450,10 +581,14 @@ private class PendingBankImportNotificationHandler(
         }
 }
 
-private data class SaveActionResult(
-    val saved: Boolean,
-    val message: String
-)
+private fun SaveResult.notificationMessage(): String =
+    when (this) {
+        is SaveResult.Saved -> message
+        is SaveResult.NeedsReview -> "Could not save: $message"
+        is SaveResult.Blocked -> "Could not save: $reason"
+        is SaveResult.Ignored -> reason
+        is SaveResult.Error -> "Could not save: $reason"
+    }
 
 private fun Context.openTransactions() {
     val intent = Intent(this, MainActivity::class.java).apply {

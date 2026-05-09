@@ -15,7 +15,7 @@ internal object BankSmsNotificationActionRules {
         val amount = pendingImport.amount
         return when {
             pendingImport.type == ParsedBankMessageType.INFORMATIONAL ->
-                SaveDecision.Blocked("This message looks informational, not a transaction.")
+                SaveDecision.Blocked("This message is informational and was not saved as a transaction.")
             pendingImport.type == ParsedBankMessageType.UNKNOWN ->
                 SaveDecision.Blocked("This message needs review before saving.")
             amount == null || amount <= 0.0 ->

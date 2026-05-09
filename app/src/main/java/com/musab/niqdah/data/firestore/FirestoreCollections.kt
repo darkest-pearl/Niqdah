@@ -9,6 +9,7 @@ object FirestoreCollections {
     const val PENDING_BANK_IMPORTS = "pendingBankImports"
     const val BANK_MESSAGE_IMPORT_HISTORY = "bankMessageImportHistory"
     const val ACCOUNT_BALANCE_SNAPSHOTS = "accountBalanceSnapshots"
+    const val INTERNAL_TRANSFER_RECORDS = "internalTransferRecords"
     const val MERCHANT_RULES = "merchantRules"
     const val SAVINGS_GOALS = "savingsGoals"
     const val MONTHLY_SNAPSHOTS = "monthlySnapshots"

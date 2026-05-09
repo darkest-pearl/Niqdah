@@ -59,6 +59,28 @@ class BankSmsNotificationActionRulesTest {
         )
     }
 
+    @Test
+    fun saveActionAllowsInternalTransferOutAndRejectsInformational() {
+        assertTrue(
+            BankSmsNotificationActionRules.canSaveFromNotification(
+                pendingImport(
+                    type = ParsedBankMessageType.INTERNAL_TRANSFER_OUT,
+                    amount = 1_000.0,
+                    categoryId = null
+                )
+            )
+        )
+        assertFalse(
+            BankSmsNotificationActionRules.canSaveFromNotification(
+                pendingImport(
+                    type = ParsedBankMessageType.INFORMATIONAL,
+                    amount = 1_000.0,
+                    categoryId = null
+                )
+            )
+        )
+    }
+
     private fun pendingImport(
         type: ParsedBankMessageType,
         amount: Double?,

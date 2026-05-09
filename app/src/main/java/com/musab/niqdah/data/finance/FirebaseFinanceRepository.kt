@@ -23,6 +23,10 @@ import com.musab.niqdah.domain.finance.FinanceData
 import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.FinanceRepository
 import com.musab.niqdah.domain.finance.IncomeTransaction
+import com.musab.niqdah.domain.finance.InternalTransferDirection
+import com.musab.niqdah.domain.finance.InternalTransferRecord
+import com.musab.niqdah.domain.finance.InternalTransferStatus
+import com.musab.niqdah.domain.finance.InternalTransferType
 import com.musab.niqdah.domain.finance.MerchantRule
 import com.musab.niqdah.domain.finance.MonthlySnapshot
 import com.musab.niqdah.domain.finance.NecessityLevel
@@ -104,11 +108,13 @@ class FirebaseFinanceRepository(
         val bankExtrasFlow = combine(
             observeBankMessageSettings(db),
             observeAccountBalanceSnapshots(db),
+            observeInternalTransferRecords(db),
             observeMerchantRules(db)
-        ) { bankMessageSettings, accountBalanceSnapshots, merchantRules ->
+        ) { bankMessageSettings, accountBalanceSnapshots, internalTransferRecords, merchantRules ->
             BankExtras(
                 bankMessageSettings = bankMessageSettings,
                 accountBalanceSnapshots = accountBalanceSnapshots,
+                internalTransferRecords = internalTransferRecords,
                 merchantRules = merchantRules
             )
         }
@@ -126,6 +132,7 @@ class FirebaseFinanceRepository(
                 incomeTransactions = core.incomeTransactions,
                 pendingBankImports = core.pendingBankImports,
                 accountBalanceSnapshots = bankExtras.accountBalanceSnapshots,
+                internalTransferRecords = bankExtras.internalTransferRecords,
                 merchantRules = bankExtras.merchantRules,
                 goals = goals.ifEmpty { FinanceDefaults.savingsGoals() },
                 debt = debt,
@@ -186,6 +193,13 @@ class FirebaseFinanceRepository(
         accountBalanceSnapshotsCollection(requireFirestore())
             .document(snapshot.documentId())
             .set(snapshot.toFirestore())
+            .awaitValue()
+    }
+
+    override suspend fun upsertInternalTransferRecord(record: InternalTransferRecord) {
+        internalTransferRecordsCollection(requireFirestore())
+            .document(record.id)
+            .set(record.toFirestore())
             .awaitValue()
     }
 
@@ -310,6 +324,22 @@ class FirebaseFinanceRepository(
             awaitClose { registration.remove() }
         }
 
+    private fun observeInternalTransferRecords(db: FirebaseFirestore): Flow<List<InternalTransferRecord>> =
+        callbackFlow {
+            val registration = internalTransferRecordsCollection(db).addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val records = snapshot?.documents
+                    ?.mapNotNull { it.toInternalTransferRecord() }
+                    ?.sortedByDescending { it.messageTimestampMillis }
+                    ?: emptyList()
+                trySend(records)
+            }
+            awaitClose { registration.remove() }
+        }
+
     private fun observeMerchantRules(db: FirebaseFirestore): Flow<List<MerchantRule>> =
         callbackFlow {
             val registration = merchantRulesCollection(db).addSnapshotListener { snapshot, error ->
@@ -399,6 +429,9 @@ class FirebaseFinanceRepository(
 
     private fun accountBalanceSnapshotsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.ACCOUNT_BALANCE_SNAPSHOTS)
+
+    private fun internalTransferRecordsCollection(db: FirebaseFirestore): CollectionReference =
+        userDocument(db).collection(FirestoreCollections.INTERNAL_TRANSFER_RECORDS)
 
     private fun merchantRulesCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.MERCHANT_RULES)
@@ -520,6 +553,22 @@ class FirebaseFinanceRepository(
             "messageTimestampMillis" to messageTimestampMillis,
             "sourceMessageHash" to sourceMessageHash,
             "createdAtMillis" to createdAtMillis
+        )
+
+    private fun InternalTransferRecord.toFirestore(): Map<String, Any?> =
+        mapOf(
+            "amount" to amount,
+            "currency" to currency,
+            "sourceAccountSuffix" to sourceAccountSuffix,
+            "targetAccountSuffix" to targetAccountSuffix,
+            "direction" to direction.name,
+            "transferType" to transferType.name,
+            "status" to status.name,
+            "pairedImportId" to pairedImportId,
+            "createdAtMillis" to createdAtMillis,
+            "messageTimestampMillis" to messageTimestampMillis,
+            "note" to note,
+            "sourceMessageHash" to sourceMessageHash
         )
 
     private fun MerchantRule.toFirestore(): Map<String, Any> =
@@ -695,6 +744,27 @@ class FirebaseFinanceRepository(
         )
     }
 
+    private fun DocumentSnapshot.toInternalTransferRecord(): InternalTransferRecord? {
+        val direction = internalTransferDirection(getString("direction")) ?: return null
+        val transferType = internalTransferType(getString("transferType")) ?: return null
+        val status = internalTransferStatus(getString("status")) ?: return null
+        return InternalTransferRecord(
+            id = id,
+            amount = double("amount"),
+            currency = getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
+            sourceAccountSuffix = getString("sourceAccountSuffix") ?: "",
+            targetAccountSuffix = getString("targetAccountSuffix"),
+            direction = direction,
+            transferType = transferType,
+            status = status,
+            pairedImportId = getString("pairedImportId"),
+            createdAtMillis = long("createdAtMillis"),
+            messageTimestampMillis = long("messageTimestampMillis"),
+            note = getString("note") ?: "",
+            sourceMessageHash = getString("sourceMessageHash") ?: id
+        )
+    }
+
     private fun DocumentSnapshot.toSavingsGoal(): SavingsGoal =
         SavingsGoal(
             id = id,
@@ -790,6 +860,15 @@ class FirebaseFinanceRepository(
     private fun accountKind(value: String?): AccountKind? =
         AccountKind.entries.firstOrNull { it.name == value }
 
+    private fun internalTransferDirection(value: String?): InternalTransferDirection? =
+        InternalTransferDirection.entries.firstOrNull { it.name == value }
+
+    private fun internalTransferType(value: String?): InternalTransferType? =
+        InternalTransferType.entries.firstOrNull { it.name == value }
+
+    private fun internalTransferStatus(value: String?): InternalTransferStatus? =
+        InternalTransferStatus.entries.firstOrNull { it.name == value }
+
     private fun AccountBalanceSnapshot.documentId(): String =
         "${accountKind.name}-$sourceMessageHash"
 }
@@ -805,5 +884,6 @@ private data class FinanceCore(
 private data class BankExtras(
     val bankMessageSettings: BankMessageParserSettings,
     val accountBalanceSnapshots: List<AccountBalanceSnapshot>,
+    val internalTransferRecords: List<InternalTransferRecord>,
     val merchantRules: List<MerchantRule>
 )
