@@ -15,6 +15,7 @@ interface FinanceRepository {
     suspend fun deletePendingBankImport(importId: String)
     suspend fun upsertBankMessageImportHistory(history: BankMessageImportHistory)
     suspend fun upsertAccountBalanceSnapshot(snapshot: AccountBalanceSnapshot)
+    suspend fun upsertMerchantRule(rule: MerchantRule)
     suspend fun upsertGoal(goal: SavingsGoal)
     suspend fun upsertDebt(debt: DebtTracker)
     suspend fun upsertBankMessageSettings(settings: BankMessageParserSettings)

@@ -107,6 +107,7 @@ fun TransactionsScreen(
             )
         }
         item { ErrorBanner(message = uiState.errorMessage, onDismiss = onClearError) }
+        item { StatusBanner(message = uiState.statusMessage, onDismiss = onClearError) }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -422,6 +423,15 @@ private fun PendingBankImportCard(
                 "Amount",
                 pendingImport.amount?.let { formatMoney(it, pendingImport.currency) } ?: "Missing"
             )
+            if (pendingImport.merchantName.isNotBlank()) {
+                PendingImportLine("Merchant", pendingImport.merchantName)
+            }
+            if (pendingImport.sourceAccountSuffix.isNotBlank()) {
+                PendingImportLine("Source account", "*${pendingImport.sourceAccountSuffix}")
+            }
+            if (pendingImport.targetAccountSuffix.isNotBlank()) {
+                PendingImportLine("Target account", "*${pendingImport.targetAccountSuffix}")
+            }
             PendingImportLine("Category", pendingImport.suggestedCategoryName)
             PendingImportLine("Necessity", pendingImport.suggestedNecessity.label)
             PendingImportLine("Date", formatTransactionDate(pendingImport.occurredAtMillis))
@@ -445,6 +455,17 @@ private fun PendingBankImportCard(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold
                 )
+            }
+            if (pendingImport.ignoredReason.isNotBlank()) {
+                Text(
+                    text = pendingImport.ignoredReason,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            if (pendingImport.pairedTransferStatus.isNotBlank()) {
+                PendingImportLine("Pairing", pendingImport.pairedTransferStatus)
             }
             if (showMessage) {
                 Text(
@@ -556,6 +577,15 @@ private fun PendingBankImportEditDialog(
                             pendingImport.availableBalanceCurrency
                         )
                     )
+                }
+                if (pendingImport.sourceAccountSuffix.isNotBlank()) {
+                    PreviewLine(label = "Source account", value = "*${pendingImport.sourceAccountSuffix}")
+                }
+                if (pendingImport.targetAccountSuffix.isNotBlank()) {
+                    PreviewLine(label = "Target account", value = "*${pendingImport.targetAccountSuffix}")
+                }
+                if (pendingImport.merchantName.isNotBlank()) {
+                    PreviewLine(label = "Merchant", value = pendingImport.merchantName)
                 }
                 if (pendingImport.originalForeignAmount != null && pendingImport.originalForeignCurrency.isNotBlank()) {
                     PreviewLine(
@@ -764,6 +794,15 @@ private fun ParsedMessagePreview(
         PreviewLine(label = "Sender", value = parsed.senderName.ifBlank { "Unknown" })
         PreviewLine(label = "Source", value = parsed.sourceType.label)
         PreviewLine(label = "Confidence", value = parsed.confidence.label)
+        if (parsed.merchantName.isNotBlank()) {
+            PreviewLine(label = "Merchant", value = parsed.merchantName)
+        }
+        if (parsed.sourceAccountSuffix.isNotBlank()) {
+            PreviewLine(label = "Source account", value = "*${parsed.sourceAccountSuffix}")
+        }
+        if (parsed.targetAccountSuffix.isNotBlank()) {
+            PreviewLine(label = "Target account", value = "*${parsed.targetAccountSuffix}")
+        }
         parsed.availableBalance?.let {
             PreviewLine(label = "Available balance", value = formatMoney(it, parsed.availableBalanceCurrency))
         }
@@ -775,6 +814,9 @@ private fun ParsedMessagePreview(
         }
         if (parsed.reviewNote.isNotBlank()) {
             PreviewLine(label = "Review note", value = parsed.reviewNote)
+        }
+        if (parsed.ignoredReason.isNotBlank()) {
+            PreviewLine(label = "Reason", value = parsed.ignoredReason)
         }
         MessageTypePicker(selectedType = selectedType, onTypeSelected = onTypeSelected)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

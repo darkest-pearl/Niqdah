@@ -40,6 +40,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.musab.niqdah.domain.finance.BudgetCategory
+import com.musab.niqdah.domain.finance.MerchantRule
 
 @Composable
 fun SettingsScreen(
@@ -48,7 +49,7 @@ fun SettingsScreen(
     padding: PaddingValues,
     onUpdateProfileAndDebt: (String, String, String, String, String, String) -> Unit,
     onUpdateCategoryBudgets: (Map<String, String>) -> Unit,
-    onUpdateBankMessageSettings: (Boolean, String, Boolean, String, Boolean, String, String, String) -> Unit,
+    onUpdateBankMessageSettings: (Boolean, String, Boolean, String, Boolean, String, String, String, String, String, Boolean) -> Unit,
     onLogout: () -> Unit,
     onClearError: () -> Unit
 ) {
@@ -63,6 +64,7 @@ fun SettingsScreen(
     var remainingDebt by remember { mutableStateOf("") }
     var categoryBudgets by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var dailySenderName by remember { mutableStateOf("") }
+    var dailyUseAccountSuffix by remember { mutableStateOf("") }
     var isAutomaticSmsImportEnabled by remember { mutableStateOf(false) }
     var isSmsPermissionGranted by remember {
         mutableStateOf(context.hasReceiveSmsPermission())
@@ -72,7 +74,9 @@ fun SettingsScreen(
     }
     var isDailyParserEnabled by remember { mutableStateOf(true) }
     var savingsSenderName by remember { mutableStateOf("") }
+    var savingsAccountSuffix by remember { mutableStateOf("") }
     var isSavingsParserEnabled by remember { mutableStateOf(true) }
+    var isMerchantLearningEnabled by remember { mutableStateOf(true) }
     var debitKeywords by remember { mutableStateOf("") }
     var creditKeywords by remember { mutableStateOf("") }
     var savingsTransferKeywords by remember { mutableStateOf("") }
@@ -110,9 +114,12 @@ fun SettingsScreen(
         val settings = uiState.data.bankMessageSettings
         isAutomaticSmsImportEnabled = settings.isAutomaticSmsImportEnabled
         dailySenderName = settings.dailyUseSource.senderName
+        dailyUseAccountSuffix = settings.dailyUseAccountSuffix
         isDailyParserEnabled = settings.dailyUseSource.isEnabled
         savingsSenderName = settings.savingsSource.senderName
+        savingsAccountSuffix = settings.savingsAccountSuffix
         isSavingsParserEnabled = settings.savingsSource.isEnabled
+        isMerchantLearningEnabled = settings.isMerchantLearningEnabled
         debitKeywords = settings.debitKeywords.joinToString(", ")
         creditKeywords = settings.creditKeywords.joinToString(", ")
         savingsTransferKeywords = settings.savingsTransferKeywords.joinToString(", ")
@@ -188,15 +195,23 @@ fun SettingsScreen(
                     "${formatMoney(it.availableBalance, it.currency)} at ${formatTransactionDateTime(it.messageTimestampMillis)}"
                 } ?: "Not known",
                 lastIgnoredSender = uiState.data.bankMessageSettings.lastIgnoredSender,
+                lastIgnoredReason = uiState.data.bankMessageSettings.lastIgnoredReason,
                 lastParsedBankMessageAtMillis = uiState.data.bankMessageSettings.lastParsedBankMessageAtMillis,
                 dailySenderName = dailySenderName,
                 onDailySenderNameChange = { dailySenderName = it },
+                dailyUseAccountSuffix = dailyUseAccountSuffix,
+                onDailyUseAccountSuffixChange = { dailyUseAccountSuffix = it.filter { char -> char.isDigit() }.takeLast(4) },
                 isDailyParserEnabled = isDailyParserEnabled,
                 onDailyParserEnabledChange = { isDailyParserEnabled = it },
                 savingsSenderName = savingsSenderName,
                 onSavingsSenderNameChange = { savingsSenderName = it },
+                savingsAccountSuffix = savingsAccountSuffix,
+                onSavingsAccountSuffixChange = { savingsAccountSuffix = it.filter { char -> char.isDigit() }.takeLast(4) },
                 isSavingsParserEnabled = isSavingsParserEnabled,
                 onSavingsParserEnabledChange = { isSavingsParserEnabled = it },
+                isMerchantLearningEnabled = isMerchantLearningEnabled,
+                onMerchantLearningEnabledChange = { isMerchantLearningEnabled = it },
+                merchantRules = uiState.data.merchantRules,
                 debitKeywords = debitKeywords,
                 onDebitKeywordsChange = { debitKeywords = it },
                 creditKeywords = creditKeywords,
@@ -213,7 +228,10 @@ fun SettingsScreen(
                         isSavingsParserEnabled,
                         debitKeywords,
                         creditKeywords,
-                        savingsTransferKeywords
+                        savingsTransferKeywords,
+                        dailyUseAccountSuffix,
+                        savingsAccountSuffix,
+                        isMerchantLearningEnabled
                     )
                 }
             )
@@ -341,15 +359,23 @@ private fun BankMessageSourcesCard(
     dailyUseBalance: String,
     savingsBalance: String,
     lastIgnoredSender: String,
+    lastIgnoredReason: String,
     lastParsedBankMessageAtMillis: Long,
     dailySenderName: String,
     onDailySenderNameChange: (String) -> Unit,
+    dailyUseAccountSuffix: String,
+    onDailyUseAccountSuffixChange: (String) -> Unit,
     isDailyParserEnabled: Boolean,
     onDailyParserEnabledChange: (Boolean) -> Unit,
     savingsSenderName: String,
     onSavingsSenderNameChange: (String) -> Unit,
+    savingsAccountSuffix: String,
+    onSavingsAccountSuffixChange: (String) -> Unit,
     isSavingsParserEnabled: Boolean,
     onSavingsParserEnabledChange: (Boolean) -> Unit,
+    isMerchantLearningEnabled: Boolean,
+    onMerchantLearningEnabledChange: (Boolean) -> Unit,
+    merchantRules: List<MerchantRule>,
     debitKeywords: String,
     onDebitKeywordsChange: (String) -> Unit,
     creditKeywords: String,
@@ -417,6 +443,11 @@ private fun BankMessageSourcesCard(
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
+                text = "Last ignored reason: ${lastIgnoredReason.ifBlank { "None" }}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
                 text = "Last parsed bank message: ${
                     lastParsedBankMessageAtMillis.takeIf { it > 0L }?.let { formatTransactionDateTime(it) } ?: "None"
                 }",
@@ -435,6 +466,15 @@ private fun BankMessageSourcesCard(
                 label = { Text("Daily-use sender name") },
                 singleLine = true
             )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = dailyUseAccountSuffix,
+                onValueChange = onDailyUseAccountSuffixChange,
+                label = { Text("Daily-use account suffix") },
+                supportingText = { Text("Last 4 digits only") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
             SourceToggleRow(
                 title = "Savings parser",
                 isEnabled = isSavingsParserEnabled,
@@ -447,6 +487,30 @@ private fun BankMessageSourcesCard(
                 label = { Text("Savings sender name") },
                 singleLine = true
             )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = savingsAccountSuffix,
+                onValueChange = onSavingsAccountSuffixChange,
+                label = { Text("Savings account suffix") },
+                supportingText = { Text("Last 4 digits only") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+            )
+            SourceToggleRow(
+                title = "Learn from merchant edits",
+                isEnabled = isMerchantLearningEnabled,
+                onEnabledChange = onMerchantLearningEnabledChange
+            )
+            if (merchantRules.isNotEmpty()) {
+                Text(text = "Merchant rules", style = MaterialTheme.typography.titleSmall)
+                merchantRules.take(8).forEach { rule ->
+                    Text(
+                        text = "${rule.merchantName}: ${rule.categoryName} / ${rule.necessity.label}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
             OutlinedTextField(
                 modifier = Modifier.fillMaxWidth(),
                 value = debitKeywords,

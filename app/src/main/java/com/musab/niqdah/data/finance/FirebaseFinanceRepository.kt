@@ -23,6 +23,7 @@ import com.musab.niqdah.domain.finance.FinanceData
 import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.FinanceRepository
 import com.musab.niqdah.domain.finance.IncomeTransaction
+import com.musab.niqdah.domain.finance.MerchantRule
 import com.musab.niqdah.domain.finance.MonthlySnapshot
 import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.ParsedBankMessageConfidence
@@ -100,23 +101,35 @@ class FirebaseFinanceRepository(
             )
         }
 
+        val bankExtrasFlow = combine(
+            observeBankMessageSettings(db),
+            observeAccountBalanceSnapshots(db),
+            observeMerchantRules(db)
+        ) { bankMessageSettings, accountBalanceSnapshots, merchantRules ->
+            BankExtras(
+                bankMessageSettings = bankMessageSettings,
+                accountBalanceSnapshots = accountBalanceSnapshots,
+                merchantRules = merchantRules
+            )
+        }
+
         return combine(
             coreFlow,
             observeGoals(db),
             observeDebt(db),
-            observeBankMessageSettings(db),
-            observeAccountBalanceSnapshots(db)
-        ) { core, goals, debt, bankMessageSettings, accountBalanceSnapshots ->
+            bankExtrasFlow
+        ) { core, goals, debt, bankExtras ->
             FinanceData(
                 profile = core.profile,
                 categories = core.categories,
                 transactions = core.transactions,
                 incomeTransactions = core.incomeTransactions,
                 pendingBankImports = core.pendingBankImports,
-                accountBalanceSnapshots = accountBalanceSnapshots,
+                accountBalanceSnapshots = bankExtras.accountBalanceSnapshots,
+                merchantRules = bankExtras.merchantRules,
                 goals = goals.ifEmpty { FinanceDefaults.savingsGoals() },
                 debt = debt,
-                bankMessageSettings = bankMessageSettings
+                bankMessageSettings = bankExtras.bankMessageSettings
             )
         }
     }
@@ -173,6 +186,13 @@ class FirebaseFinanceRepository(
         accountBalanceSnapshotsCollection(requireFirestore())
             .document(snapshot.documentId())
             .set(snapshot.toFirestore())
+            .awaitValue()
+    }
+
+    override suspend fun upsertMerchantRule(rule: MerchantRule) {
+        merchantRulesCollection(requireFirestore())
+            .document(rule.normalizedMerchantName)
+            .set(rule.toFirestore())
             .awaitValue()
     }
 
@@ -290,6 +310,22 @@ class FirebaseFinanceRepository(
             awaitClose { registration.remove() }
         }
 
+    private fun observeMerchantRules(db: FirebaseFirestore): Flow<List<MerchantRule>> =
+        callbackFlow {
+            val registration = merchantRulesCollection(db).addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val rules = snapshot?.documents
+                    ?.mapNotNull { it.toMerchantRule() }
+                    ?.sortedByDescending { it.lastUpdatedMillis }
+                    ?: emptyList()
+                trySend(rules)
+            }
+            awaitClose { registration.remove() }
+        }
+
     private fun observeGoals(db: FirebaseFirestore): Flow<List<SavingsGoal>> =
         callbackFlow {
             val registration = goalsCollection(db).addSnapshotListener { snapshot, error ->
@@ -363,6 +399,9 @@ class FirebaseFinanceRepository(
 
     private fun accountBalanceSnapshotsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.ACCOUNT_BALANCE_SNAPSHOTS)
+
+    private fun merchantRulesCollection(db: FirebaseFirestore): CollectionReference =
+        userDocument(db).collection(FirestoreCollections.MERCHANT_RULES)
 
     private fun goalsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.SAVINGS_GOALS)
@@ -448,6 +487,11 @@ class FirebaseFinanceRepository(
             "inferredAccountDebit" to inferredAccountDebit,
             "isAmountInferredFromBalance" to isAmountInferredFromBalance,
             "reviewNote" to reviewNote,
+            "merchantName" to merchantName,
+            "sourceAccountSuffix" to sourceAccountSuffix,
+            "targetAccountSuffix" to targetAccountSuffix,
+            "ignoredReason" to ignoredReason,
+            "pairedTransferStatus" to pairedTransferStatus,
             "description" to description,
             "occurredAtMillis" to occurredAtMillis,
             "suggestedCategoryId" to suggestedCategoryId,
@@ -476,6 +520,17 @@ class FirebaseFinanceRepository(
             "messageTimestampMillis" to messageTimestampMillis,
             "sourceMessageHash" to sourceMessageHash,
             "createdAtMillis" to createdAtMillis
+        )
+
+    private fun MerchantRule.toFirestore(): Map<String, Any> =
+        mapOf(
+            "normalizedMerchantName" to normalizedMerchantName,
+            "merchantName" to merchantName,
+            "categoryId" to categoryId,
+            "categoryName" to categoryName,
+            "necessity" to necessity.name,
+            "lastUpdatedMillis" to lastUpdatedMillis,
+            "timesConfirmed" to timesConfirmed
         )
 
     private fun SavingsGoal.toFirestore(): Map<String, Any> =
@@ -515,8 +570,12 @@ class FirebaseFinanceRepository(
             "savingsSource" to savingsSource.toFirestore(),
             "isAutomaticSmsImportEnabled" to isAutomaticSmsImportEnabled,
             "requireReviewBeforeSaving" to requireReviewBeforeSaving,
+            "dailyUseAccountSuffix" to dailyUseAccountSuffix,
+            "savingsAccountSuffix" to savingsAccountSuffix,
+            "isMerchantLearningEnabled" to isMerchantLearningEnabled,
             "lastIgnoredSender" to lastIgnoredSender,
             "lastParsedBankMessageAtMillis" to lastParsedBankMessageAtMillis,
+            "lastIgnoredReason" to lastIgnoredReason,
             "debitKeywords" to debitKeywords,
             "creditKeywords" to creditKeywords,
             "savingsTransferKeywords" to savingsTransferKeywords
@@ -593,6 +652,11 @@ class FirebaseFinanceRepository(
             inferredAccountDebit = nullableDouble("inferredAccountDebit"),
             isAmountInferredFromBalance = getBoolean("isAmountInferredFromBalance") ?: false,
             reviewNote = getString("reviewNote") ?: "",
+            merchantName = getString("merchantName") ?: "",
+            sourceAccountSuffix = getString("sourceAccountSuffix") ?: "",
+            targetAccountSuffix = getString("targetAccountSuffix") ?: "",
+            ignoredReason = getString("ignoredReason") ?: "",
+            pairedTransferStatus = getString("pairedTransferStatus") ?: "",
             description = getString("description") ?: "",
             occurredAtMillis = long("occurredAtMillis"),
             suggestedCategoryId = getString("suggestedCategoryId"),
@@ -603,6 +667,20 @@ class FirebaseFinanceRepository(
             createdAtMillis = long("createdAtMillis"),
             updatedAtMillis = long("updatedAtMillis")
         )
+
+    private fun DocumentSnapshot.toMerchantRule(): MerchantRule? {
+        val normalizedName = getString("normalizedMerchantName") ?: id
+        if (normalizedName.isBlank()) return null
+        return MerchantRule(
+            normalizedMerchantName = normalizedName,
+            merchantName = getString("merchantName") ?: normalizedName,
+            categoryId = getString("categoryId") ?: FinanceDefaults.UNCATEGORIZED_CATEGORY_ID,
+            categoryName = getString("categoryName") ?: "Uncategorized",
+            necessity = necessityLevel(getString("necessity")),
+            lastUpdatedMillis = long("lastUpdatedMillis"),
+            timesConfirmed = ((get("timesConfirmed") as? Number)?.toInt() ?: 1).coerceAtLeast(1)
+        )
+    }
 
     private fun DocumentSnapshot.toAccountBalanceSnapshot(): AccountBalanceSnapshot? {
         val accountKind = accountKind(getString("accountKind")) ?: return null
@@ -651,11 +729,16 @@ class FirebaseFinanceRepository(
                 ?: defaults.isAutomaticSmsImportEnabled,
             requireReviewBeforeSaving = getBoolean("requireReviewBeforeSaving")
                 ?: defaults.requireReviewBeforeSaving,
+            dailyUseAccountSuffix = getString("dailyUseAccountSuffix") ?: defaults.dailyUseAccountSuffix,
+            savingsAccountSuffix = getString("savingsAccountSuffix") ?: defaults.savingsAccountSuffix,
+            isMerchantLearningEnabled = getBoolean("isMerchantLearningEnabled")
+                ?: defaults.isMerchantLearningEnabled,
             lastIgnoredSender = getString("lastIgnoredSender") ?: defaults.lastIgnoredSender,
             lastParsedBankMessageAtMillis = long(
                 "lastParsedBankMessageAtMillis",
                 defaults.lastParsedBankMessageAtMillis
             ),
+            lastIgnoredReason = getString("lastIgnoredReason") ?: defaults.lastIgnoredReason,
             debitKeywords = stringList("debitKeywords", defaults.debitKeywords),
             creditKeywords = stringList("creditKeywords", defaults.creditKeywords),
             savingsTransferKeywords = stringList("savingsTransferKeywords", defaults.savingsTransferKeywords)
@@ -717,4 +800,10 @@ private data class FinanceCore(
     val transactions: List<ExpenseTransaction>,
     val incomeTransactions: List<IncomeTransaction>,
     val pendingBankImports: List<PendingBankImport>
+)
+
+private data class BankExtras(
+    val bankMessageSettings: BankMessageParserSettings,
+    val accountBalanceSnapshots: List<AccountBalanceSnapshot>,
+    val merchantRules: List<MerchantRule>
 )

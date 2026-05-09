@@ -29,6 +29,7 @@ import com.musab.niqdah.domain.finance.BankMessageSourceSettings
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.CategoryType
 import com.musab.niqdah.domain.finance.FinanceDefaults
+import com.musab.niqdah.domain.finance.MerchantRule
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -66,6 +67,7 @@ class BankSmsImportProcessor(
 
         val categories = fetchCategories(db)
         val latestBalances = fetchAccountBalanceSnapshots(db)
+        val merchantRules = fetchMerchantRules(db)
         val now = System.currentTimeMillis()
         val pendingImport = parser.parsePendingImport(
             rawMessage = messageBody,
@@ -75,8 +77,33 @@ class BankSmsImportProcessor(
             messageHash = hash,
             receivedAtMillis = receivedAtMillis,
             latestBalances = latestBalances,
+            merchantRules = merchantRules,
             nowMillis = now
         )
+
+        if (pendingImport.type == ParsedBankMessageType.INFORMATIONAL) {
+            bankMessageImportHistoryCollection(db)
+                .document(hash)
+                .set(
+                    BankMessageImportHistory(
+                        messageHash = hash,
+                        status = BankMessageImportStatus.IGNORED,
+                        senderName = senderName,
+                        updatedAtMillis = now
+                    ).toFirestore()
+                )
+                .awaitValue()
+            updateSmsStatus(
+                db,
+                mapOf(
+                    "lastIgnoredSender" to senderName,
+                    "lastIgnoredReason" to pendingImport.ignoredReason.ifBlank {
+                        "Ignored informational bank message."
+                    }
+                )
+            )
+            return SmsImportProcessResult.IgnoredInformational
+        }
 
         pendingBankImportsCollection(db)
             .document(hash)
@@ -122,9 +149,14 @@ class BankSmsImportProcessor(
             isAutomaticSmsImportEnabled = snapshot.getBoolean("isAutomaticSmsImportEnabled")
                 ?: defaults.isAutomaticSmsImportEnabled,
             requireReviewBeforeSaving = true,
+            dailyUseAccountSuffix = snapshot.getString("dailyUseAccountSuffix") ?: defaults.dailyUseAccountSuffix,
+            savingsAccountSuffix = snapshot.getString("savingsAccountSuffix") ?: defaults.savingsAccountSuffix,
+            isMerchantLearningEnabled = snapshot.getBoolean("isMerchantLearningEnabled")
+                ?: defaults.isMerchantLearningEnabled,
             lastIgnoredSender = snapshot.getString("lastIgnoredSender") ?: "",
             lastParsedBankMessageAtMillis =
                 (snapshot.get("lastParsedBankMessageAtMillis") as? Number)?.toLong() ?: 0L,
+            lastIgnoredReason = snapshot.getString("lastIgnoredReason") ?: "",
             debitKeywords = snapshot.stringList("debitKeywords", defaults.debitKeywords),
             creditKeywords = snapshot.stringList("creditKeywords", defaults.creditKeywords),
             savingsTransferKeywords = snapshot.stringList(
@@ -164,6 +196,28 @@ class BankSmsImportProcessor(
                     messageTimestampMillis = (snapshot.get("messageTimestampMillis") as? Number)?.toLong() ?: 0L,
                     sourceMessageHash = snapshot.getString("sourceMessageHash") ?: snapshot.id.substringAfter("-", snapshot.id),
                     createdAtMillis = (snapshot.get("createdAtMillis") as? Number)?.toLong() ?: 0L
+                )
+            }
+
+    private suspend fun fetchMerchantRules(db: FirebaseFirestore): List<MerchantRule> =
+        userDocument(db)
+            .collection(FirestoreCollections.MERCHANT_RULES)
+            .get()
+            .awaitValue()
+            .documents
+            .mapNotNull { snapshot ->
+                val normalizedName = snapshot.getString("normalizedMerchantName") ?: snapshot.id
+                if (normalizedName.isBlank()) return@mapNotNull null
+                MerchantRule(
+                    normalizedMerchantName = normalizedName,
+                    merchantName = snapshot.getString("merchantName") ?: normalizedName,
+                    categoryId = snapshot.getString("categoryId") ?: FinanceDefaults.UNCATEGORIZED_CATEGORY_ID,
+                    categoryName = snapshot.getString("categoryName") ?: "Uncategorized",
+                    necessity = com.musab.niqdah.domain.finance.NecessityLevel.entries.firstOrNull {
+                        it.name == snapshot.getString("necessity")
+                    } ?: com.musab.niqdah.domain.finance.NecessityLevel.OPTIONAL,
+                    lastUpdatedMillis = (snapshot.get("lastUpdatedMillis") as? Number)?.toLong() ?: 0L,
+                    timesConfirmed = ((snapshot.get("timesConfirmed") as? Number)?.toInt() ?: 1).coerceAtLeast(1)
                 )
             }
 
@@ -306,6 +360,11 @@ class BankSmsImportProcessor(
             "inferredAccountDebit" to inferredAccountDebit,
             "isAmountInferredFromBalance" to isAmountInferredFromBalance,
             "reviewNote" to reviewNote,
+            "merchantName" to merchantName,
+            "sourceAccountSuffix" to sourceAccountSuffix,
+            "targetAccountSuffix" to targetAccountSuffix,
+            "ignoredReason" to ignoredReason,
+            "pairedTransferStatus" to pairedTransferStatus,
             "description" to description,
             "occurredAtMillis" to occurredAtMillis,
             "suggestedCategoryId" to suggestedCategoryId,
@@ -364,6 +423,9 @@ class BankSmsImportProcessor(
                 "Savings draft: ${amount?.let { formatNotificationMoney(it, currency) } ?: "amount needed"}"
             ParsedBankMessageType.INCOME ->
                 "Income draft: ${amount?.let { formatNotificationMoney(it, currency) } ?: "amount needed"}"
+            ParsedBankMessageType.INTERNAL_TRANSFER_OUT ->
+                "Transfer draft: ${amount?.let { formatNotificationMoney(it, currency) } ?: "amount needed"}"
+            ParsedBankMessageType.INFORMATIONAL -> "Bank message ignored"
             ParsedBankMessageType.UNKNOWN -> "Bank message needs review"
         }
 
@@ -382,6 +444,9 @@ class BankSmsImportProcessor(
             originalForeignAmount?.takeIf { originalForeignCurrency.isNotBlank() }?.let {
                 "Original: ${formatNotificationMoney(it, originalForeignCurrency)}"
             },
+            merchantName.takeIf { it.isNotBlank() }?.let { "Merchant: $it" },
+            sourceAccountSuffix.takeIf { it.isNotBlank() }?.let { "Source acct: *$it" },
+            targetAccountSuffix.takeIf { it.isNotBlank() }?.let { "Target acct: *$it" },
             "Category: $suggestedCategoryName",
             "Confidence: ${confidence.label}",
             availableBalance?.let {
@@ -432,6 +497,7 @@ enum class SmsImportProcessResult {
     PendingCreated,
     Disabled,
     IgnoredSender,
+    IgnoredInformational,
     Duplicate,
     FirebaseUnavailable
 }

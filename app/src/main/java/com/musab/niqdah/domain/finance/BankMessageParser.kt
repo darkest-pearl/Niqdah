@@ -18,6 +18,7 @@ class BankMessageParser {
         messageHash: String,
         receivedAtMillis: Long,
         latestBalances: List<AccountBalanceSnapshot> = emptyList(),
+        merchantRules: List<MerchantRule> = emptyList(),
         nowMillis: Long = System.currentTimeMillis()
     ): PendingBankImport {
         val parsed = parse(
@@ -26,13 +27,14 @@ class BankMessageParser {
             settings = settings,
             categories = categories,
             latestBalances = latestBalances,
+            merchantRules = merchantRules,
             nowMillis = receivedAtMillis
         )
         return PendingBankImport(
             id = messageHash,
             messageHash = messageHash,
             senderName = parsed.senderName.ifBlank { senderName },
-            rawMessage = rawMessage,
+            rawMessage = "",
             sourceType = parsed.sourceType,
             type = parsed.type,
             amount = parsed.amount,
@@ -44,6 +46,11 @@ class BankMessageParser {
             inferredAccountDebit = parsed.inferredAccountDebit,
             isAmountInferredFromBalance = parsed.isAmountInferredFromBalance,
             reviewNote = parsed.reviewNote,
+            merchantName = parsed.merchantName,
+            sourceAccountSuffix = parsed.sourceAccountSuffix,
+            targetAccountSuffix = parsed.targetAccountSuffix,
+            ignoredReason = parsed.ignoredReason,
+            pairedTransferStatus = parsed.pairedTransferStatus,
             description = parsed.description,
             occurredAtMillis = parsed.occurredAtMillis,
             suggestedCategoryId = parsed.suggestedCategoryId,
@@ -62,16 +69,34 @@ class BankMessageParser {
         settings: BankMessageParserSettings,
         categories: List<BudgetCategory>,
         latestBalances: List<AccountBalanceSnapshot> = emptyList(),
+        merchantRules: List<MerchantRule> = emptyList(),
         nowMillis: Long = System.currentTimeMillis()
     ): ParsedBankMessage {
         val compactMessage = rawMessage.compact()
         val senderName = manualSenderName.trim().ifBlank { extractSender(rawMessage) }
+        val maskedSuffixes = extractMaskedAccountSuffixes(rawMessage)
+        val sourceAccountSuffix = extractSourceAccountSuffix(rawMessage).sanitizeSuffix()
+        val targetAccountSuffix = extractTargetAccountSuffix(rawMessage).sanitizeSuffix()
+        val cardAccountSuffix = extractCardSuffix(rawMessage).sanitizeSuffix()
+        val resolvedSourceSuffix = sourceAccountSuffix.ifBlank {
+            if (compactMessage.contains("card ending")) cardAccountSuffix else ""
+        }
+        val resolvedTargetSuffix = targetAccountSuffix
+        val isAccountToAccountTransfer = compactMessage.contains("account to account transfer")
+        val informationalReason = informationalReason(compactMessage)
         val savingsKeywords = mergedKeywords(
             settings.savingsTransferKeywords,
             FinanceDefaults.DEFAULT_SAVINGS_TRANSFER_KEYWORDS,
             STRONG_SAVINGS_TRANSFER_KEYWORDS
         )
-        val sourceType = resolveSourceType(senderName, compactMessage, settings, savingsKeywords)
+        val sourceType = resolveSourceType(
+            senderName = senderName,
+            compactMessage = compactMessage,
+            settings = settings,
+            savingsKeywords = savingsKeywords,
+            sourceAccountSuffix = resolvedSourceSuffix,
+            targetAccountSuffix = resolvedTargetSuffix
+        )
         val canUseDaily = settings.dailyUseSource.isEnabled &&
             (sourceType == BankMessageSourceType.DAILY_USE || sourceType == BankMessageSourceType.UNKNOWN)
         val debitKeywords = mergedKeywords(
@@ -88,6 +113,12 @@ class BankMessageParser {
         val hasDebit = compactMessage.containsAny(debitKeywords)
         val hasCredit = compactMessage.containsAny(creditKeywords)
         val parsedType = when {
+            informationalReason.isNotBlank() -> ParsedBankMessageType.INFORMATIONAL
+            isAccountToAccountTransfer &&
+                hasCredit &&
+                settings.savingsAccountSuffix.matchesSuffix(resolvedTargetSuffix.ifBlank { maskedSuffixes.firstOrNull().orEmpty() }) ->
+                ParsedBankMessageType.SAVINGS_TRANSFER
+            isAccountToAccountTransfer && hasDebit -> ParsedBankMessageType.INTERNAL_TRANSFER_OUT
             hasSavingsTransfer -> ParsedBankMessageType.SAVINGS_TRANSFER
             hasDebit && canUseDaily -> ParsedBankMessageType.EXPENSE
             hasCredit && canUseDaily -> ParsedBankMessageType.INCOME
@@ -125,13 +156,19 @@ class BankMessageParser {
             moneyMentions.any { !it.isBalanceLike && it.hasExplicitCurrency }
         val availableBalance = balanceMention?.amount
         val occurredAt = parseDateMillis(rawMessage, nowMillis) ?: nowMillis
+        val merchantName = extractMerchant(
+            rawMessage = rawMessage,
+            compactMessage = compactMessage,
+            parsedType = parsedType
+        )
         val categorySuggestion = when (parsedType) {
             ParsedBankMessageType.SAVINGS_TRANSFER -> categoryFor(
                 categoryId = FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID,
                 categories = categories,
                 necessity = NecessityLevel.NECESSARY
             )
-            ParsedBankMessageType.EXPENSE -> inferCategory(compactMessage, categories)
+            ParsedBankMessageType.EXPENSE -> merchantRuleSuggestion(merchantName, merchantRules, categories)
+                ?: inferCategory(compactMessage, merchantName, categories)
             else -> categoryFor(
                 categoryId = FinanceDefaults.UNCATEGORIZED_CATEGORY_ID,
                 categories = categories,
@@ -142,7 +179,8 @@ class BankMessageParser {
             rawMessage = rawMessage,
             compactMessage = compactMessage,
             parsedType = parsedType,
-            senderName = senderName
+            senderName = senderName,
+            merchantName = merchantName
         )
 
         return ParsedBankMessage(
@@ -158,7 +196,35 @@ class BankMessageParser {
             originalForeignCurrency = foreignTransactionAmount?.currency.orEmpty(),
             inferredAccountDebit = inference?.amount,
             isAmountInferredFromBalance = inference != null,
-            reviewNote = inference?.note.orEmpty(),
+            reviewNote = reviewNoteFor(
+                parsedType = parsedType,
+                inference = inference,
+                availableBalance = availableBalance,
+                isAccountToAccountTransfer = isAccountToAccountTransfer,
+                savingsBalanceConflictNote = savingsBalanceConflictNote(
+                    parsedType = parsedType,
+                    latestBalances = latestBalances,
+                    availableBalance = availableBalance,
+                    amount = amount
+                )
+            ),
+            merchantName = merchantName,
+            sourceAccountSuffix = resolvedSourceSuffix.ifBlank {
+                if (parsedType == ParsedBankMessageType.INTERNAL_TRANSFER_OUT) maskedSuffixes.firstOrNull().orEmpty() else ""
+            },
+            targetAccountSuffix = resolvedTargetSuffix.ifBlank {
+                if (parsedType == ParsedBankMessageType.SAVINGS_TRANSFER && isAccountToAccountTransfer) {
+                    maskedSuffixes.firstOrNull().orEmpty()
+                } else {
+                    ""
+                }
+            },
+            ignoredReason = informationalReason,
+            pairedTransferStatus = if (parsedType == ParsedBankMessageType.INTERNAL_TRANSFER_OUT) {
+                "Needs matching credit"
+            } else {
+                ""
+            },
             description = description,
             occurredAtMillis = occurredAt,
             suggestedCategoryId = categorySuggestion.id,
@@ -168,7 +234,10 @@ class BankMessageParser {
                 parsedType = parsedType,
                 amount = amount,
                 hasExplicitCurrency = hasExplicitCurrency,
-                hasSavingsTransfer = hasSavingsTransfer
+                hasSavingsTransfer = hasSavingsTransfer,
+                isAccountToAccountTransfer = isAccountToAccountTransfer,
+                accountSuffixMatched = settings.savingsAccountSuffix.matchesSuffix(resolvedTargetSuffix) ||
+                    settings.dailyUseAccountSuffix.matchesSuffix(resolvedSourceSuffix)
             )
         )
     }
@@ -177,13 +246,17 @@ class BankMessageParser {
         senderName: String,
         compactMessage: String,
         settings: BankMessageParserSettings,
-        savingsKeywords: List<String>
+        savingsKeywords: List<String>,
+        sourceAccountSuffix: String,
+        targetAccountSuffix: String
     ): BankMessageSourceType {
         val normalizedSender = senderName.normalizedToken()
         val dailySender = settings.dailyUseSource.senderName.normalizedToken()
         val savingsSender = settings.savingsSource.senderName.normalizedToken()
 
         return when {
+            settings.savingsAccountSuffix.matchesSuffix(targetAccountSuffix) -> BankMessageSourceType.SAVINGS
+            settings.dailyUseAccountSuffix.matchesSuffix(sourceAccountSuffix) -> BankMessageSourceType.DAILY_USE
             settings.savingsSource.isEnabled &&
                 compactMessage.containsAny(savingsKeywords) -> BankMessageSourceType.SAVINGS
             settings.dailyUseSource.isEnabled &&
@@ -215,9 +288,10 @@ class BankMessageParser {
 
     private fun extractMoneyMentions(rawMessage: String): List<MoneyMention> {
         val mentions = mutableListOf<MoneyMention>()
+        val amountPattern = """(?:[0-9][0-9,]*(?:\.\d{1,2})?|\.\d{1,2})"""
         val patterns = listOf(
-            Regex("""\b(AED|DHS|DIRHAMS?|USD|SAR|EUR|GBP)\s*([0-9][0-9,]*(?:\.\d{1,2})?)\b""", RegexOption.IGNORE_CASE),
-            Regex("""\b([0-9][0-9,]*(?:\.\d{1,2})?)\s*(AED|DHS|DIRHAMS?|USD|SAR|EUR|GBP)\b""", RegexOption.IGNORE_CASE)
+            Regex("""\b(AED|DHS|DIRHAMS?|USD|SAR|EUR|GBP)\s*($amountPattern)\b""", RegexOption.IGNORE_CASE),
+            Regex("""\b($amountPattern)\s*(AED|DHS|DIRHAMS?|USD|SAR|EUR|GBP)\b""", RegexOption.IGNORE_CASE)
         )
 
         patterns.forEach { pattern ->
@@ -241,7 +315,7 @@ class BankMessageParser {
         }
 
         Regex(
-            """\b(?:amount|amt|debited|credited|spent|paid|purchase|transferred?)\D{0,20}([0-9][0-9,]*(?:\.\d{1,2})?)\b""",
+            """\b(?:amount|amt|debited|credited|spent|paid|purchase|transferred?)\D{0,20}($amountPattern)\b""",
             RegexOption.IGNORE_CASE
         ).findAll(rawMessage).forEach { match ->
             val range = match.groups[1]?.range ?: return@forEach
@@ -342,12 +416,34 @@ class BankMessageParser {
 
     private fun inferCategory(
         compactMessage: String,
+        merchantName: String,
         categories: List<BudgetCategory>
     ): CategorySuggestion {
+        val compactMerchant = merchantName.compact()
         val rules = listOf(
             CategoryRule(
                 id = FinanceDefaults.FOOD_TRANSPORT_CATEGORY_ID,
-                keywords = listOf("burger", "restaurant", "cafeteria", "food", "talabat", "noon food", "taxi", "fuel", "metro", "bus"),
+                keywords = listOf(
+                    "burger",
+                    "restaurant",
+                    "cafeteria",
+                    "food",
+                    "talabat",
+                    "noon food",
+                    "taxi",
+                    "fuel",
+                    "metro",
+                    "bus",
+                    "aman taxi",
+                    "union taxi",
+                    "citi taxi",
+                    "zed mobility",
+                    "fresh choice",
+                    "grocery",
+                    "grocerys",
+                    "supermarket",
+                    "super"
+                ),
                 necessity = NecessityLevel.NECESSARY
             ),
             CategoryRule(
@@ -377,16 +473,62 @@ class BankMessageParser {
             ),
             CategoryRule(
                 id = FinanceDefaults.AVOID_CATEGORY_ID,
-                keywords = listOf("avoid", "casino", "betting", "lottery"),
+                keywords = listOf("avoid", "casino", "betting", "lottery", "temu", "tamara"),
                 necessity = NecessityLevel.AVOID
+            ),
+            CategoryRule(
+                id = FinanceDefaults.UNCATEGORIZED_CATEGORY_ID,
+                keywords = listOf("openai", "chatgpt", "oracle ireland", "du google payment", "fedex"),
+                necessity = NecessityLevel.OPTIONAL
             )
         )
 
-        val match = rules.firstOrNull { rule -> compactMessage.containsAny(rule.keywords) }
+        val match = rules.firstOrNull { rule ->
+            compactMessage.containsAny(rule.keywords) || compactMerchant.containsAny(rule.keywords)
+        }
         return categoryFor(
             categoryId = match?.id ?: FinanceDefaults.UNCATEGORIZED_CATEGORY_ID,
             categories = categories,
             necessity = match?.necessity ?: NecessityLevel.OPTIONAL
+        )
+    }
+
+    private fun merchantRuleSuggestion(
+        merchantName: String,
+        merchantRules: List<MerchantRule>,
+        categories: List<BudgetCategory>
+    ): CategorySuggestion? {
+        val normalizedMerchant = merchantName.normalizedMerchantName()
+        if (normalizedMerchant.isBlank()) return null
+
+        val rule = merchantRules
+            .filter { it.normalizedMerchantName.isNotBlank() }
+            .maxByOrNull { rule ->
+                val normalizedRule = rule.normalizedMerchantName
+                when {
+                    normalizedMerchant == normalizedRule -> 100 + rule.timesConfirmed
+                    normalizedMerchant.contains(normalizedRule) || normalizedRule.contains(normalizedMerchant) ->
+                        60 + rule.timesConfirmed
+                    normalizedMerchant.sharedTokenCount(normalizedRule) >= 2 ->
+                        30 + rule.timesConfirmed
+                    else -> 0
+                }
+            }
+            ?.takeIf { rule ->
+                val normalizedRule = rule.normalizedMerchantName
+                normalizedMerchant == normalizedRule ||
+                    normalizedMerchant.contains(normalizedRule) ||
+                    normalizedRule.contains(normalizedMerchant) ||
+                    normalizedMerchant.sharedTokenCount(normalizedRule) >= 2
+            }
+            ?: return null
+
+        val category = categories.firstOrNull { it.id == rule.categoryId }
+            ?: FinanceDefaults.budgetCategories().firstOrNull { it.id == rule.categoryId }
+        return CategorySuggestion(
+            id = category?.id ?: rule.categoryId,
+            name = category?.name ?: rule.categoryName.ifBlank { "Uncategorized" },
+            necessity = rule.necessity
         )
     }
 
@@ -408,9 +550,13 @@ class BankMessageParser {
         rawMessage: String,
         compactMessage: String,
         parsedType: ParsedBankMessageType,
-        senderName: String
+        senderName: String,
+        merchantName: String
     ): String {
         if (parsedType == ParsedBankMessageType.SAVINGS_TRANSFER) return "Transfer to savings"
+        if (parsedType == ParsedBankMessageType.INTERNAL_TRANSFER_OUT) return "Transfer to savings"
+        if (parsedType == ParsedBankMessageType.INFORMATIONAL) return "Informational bank message"
+        if (merchantName.isNotBlank()) return merchantName
 
         val merchantPatterns = listOf(
             Regex("""(?i)\b(?:at|from|to)\s+([A-Za-z][A-Za-z0-9 &'./\-]{2,55}?)(?=\s+(?:on|at|bal|balance|available|ref|card|acct|account)|[.,;]|$)"""),
@@ -433,13 +579,32 @@ class BankMessageParser {
             .ifBlank { "Imported bank message" }
     }
 
+    private fun extractMerchant(
+        rawMessage: String,
+        compactMessage: String,
+        parsedType: ParsedBankMessageType
+    ): String {
+        if (parsedType != ParsedBankMessageType.EXPENSE) return ""
+        val merchantPatterns = listOf(
+            Regex("""(?i)\bfor\s+(?:AED|DHS|DIRHAMS?|USD|SAR|EUR|GBP)\s*(?:[0-9][0-9,]*(?:\.\d{1,2})?|\.\d{1,2})\s+at\s+(.+?)\s+on\s+\d{1,2}[-/ ]"""),
+            Regex("""(?i)\b(?:at|from|to)\s+([A-Za-z][A-Za-z0-9 &'*./\-]{2,70}?)(?=\s+(?:on|at|bal|balance|available|ref|card|acct|account)|[.,;]|$)"""),
+            Regex("""(?i)\b(?:merchant|details|desc|description)\s*[:\-]\s*([A-Za-z0-9 &'*./\-]{2,70})""")
+        )
+        merchantPatterns.forEach { pattern ->
+            val candidate = pattern.find(rawMessage)?.groupValues?.getOrNull(1)?.trim(' ', '.', ',')
+            if (!candidate.isNullOrBlank() && !candidate.first().isDigit()) return candidate
+        }
+        return compactMessage
+            .takeIf { it.contains(" at ") }
+            ?.substringAfter(" at ")
+            ?.substringBefore(" on ")
+            ?.trim(' ', '.', ',')
+            .orEmpty()
+    }
+
     private fun parseDateMillis(rawMessage: String, nowMillis: Long): Long? {
         val date = parseDate(rawMessage) ?: return null
-        val time = Regex("""\b([01]?\d|2[0-3]):([0-5]\d)\b""")
-            .find(rawMessage)
-            ?.let { match ->
-                LocalTime.of(match.groupValues[1].toInt(), match.groupValues[2].toInt())
-            }
+        val time = parseTime(rawMessage)
             ?: LocalTime.MIDNIGHT
         return LocalDateTime.of(date, time)
             .atZone(ZoneId.systemDefault())
@@ -463,7 +628,7 @@ class BankMessageParser {
                 }.getOrNull()
             }
 
-        Regex("""\b(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{2,4})\b""")
+        Regex("""\b(\d{1,2})[-\s]([A-Za-z]{3,9})[-\s](\d{2,4})\b""")
             .find(rawMessage)
             ?.let {
                 val year = it.groupValues[3].toInt().let { value -> if (value < 100) 2000 + value else value }
@@ -481,12 +646,47 @@ class BankMessageParser {
         return null
     }
 
+    private fun parseTime(rawMessage: String): LocalTime? {
+        Regex("""(?i)\b(1[0-2]|0?[1-9]):([0-5]\d)\s*(AM|PM)\b""")
+            .find(rawMessage)
+            ?.let { match ->
+                val hour = match.groupValues[1].toInt()
+                val minute = match.groupValues[2].toInt()
+                val isPm = match.groupValues[3].equals("PM", ignoreCase = true)
+                val normalizedHour = when {
+                    isPm && hour < 12 -> hour + 12
+                    !isPm && hour == 12 -> 0
+                    else -> hour
+                }
+                return LocalTime.of(normalizedHour, minute)
+            }
+
+        return Regex("""\b([01]?\d|2[0-3]):([0-5]\d)\b""")
+            .find(rawMessage)
+            ?.let { match ->
+                LocalTime.of(match.groupValues[1].toInt(), match.groupValues[2].toInt())
+            }
+    }
+
     private fun confidenceFor(
         parsedType: ParsedBankMessageType,
         amount: Double?,
         hasExplicitCurrency: Boolean,
-        hasSavingsTransfer: Boolean
+        hasSavingsTransfer: Boolean,
+        isAccountToAccountTransfer: Boolean,
+        accountSuffixMatched: Boolean
     ): ParsedBankMessageConfidence = when {
+        parsedType == ParsedBankMessageType.INFORMATIONAL ->
+            ParsedBankMessageConfidence.HIGH
+        parsedType == ParsedBankMessageType.SAVINGS_TRANSFER &&
+            isAccountToAccountTransfer &&
+            amount != null &&
+            accountSuffixMatched ->
+            ParsedBankMessageConfidence.HIGH
+        parsedType == ParsedBankMessageType.INTERNAL_TRANSFER_OUT &&
+            isAccountToAccountTransfer &&
+            amount != null ->
+            ParsedBankMessageConfidence.MEDIUM
         parsedType == ParsedBankMessageType.SAVINGS_TRANSFER && hasSavingsTransfer && amount != null ->
             ParsedBankMessageConfidence.HIGH
         parsedType != ParsedBankMessageType.UNKNOWN && amount != null && hasExplicitCurrency ->
@@ -515,13 +715,129 @@ class BankMessageParser {
         return keywords.any { keyword -> keyword.trim().isNotBlank() && text.contains(keyword.trim().lowercase(Locale.US)) }
     }
 
+    private fun informationalReason(compactMessage: String): String =
+        when {
+            compactMessage.contains(" otp ") || compactMessage.startsWith("otp ") || compactMessage.contains("do not share otp") ->
+                "Ignored informational bank message."
+            compactMessage.contains("beneficiary has been added") ->
+                "Ignored informational bank message."
+            compactMessage.contains("telephone banking activation code") ->
+                "Ignored informational bank message."
+            compactMessage.contains("added to google pay") || compactMessage.contains("card added") ->
+                "Ignored informational bank message."
+            compactMessage.contains("debit card activated") || compactMessage.contains("pin set") ->
+                "Ignored informational bank message."
+            compactMessage.contains("inquiry") && compactMessage.contains("addressed") ->
+                "Ignored informational bank message."
+            compactMessage.contains("could not be processed") ->
+                "Ignored informational bank message."
+            compactMessage.contains("request received for fund transfer") ->
+                "Ignored informational bank message."
+            else -> ""
+        }
+
+    private fun extractMaskedAccountSuffixes(rawMessage: String): List<String> =
+        Regex("""(?i)(?:x{2,}|[*]{2,}|ending(?:\s+with)?|card\s+ending|account\s+no\.?|ac\s+no\.?)\s*([0-9]{4})\b""")
+            .findAll(rawMessage)
+            .map { it.groupValues[1].sanitizeSuffix() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
+
+    private fun extractSourceAccountSuffix(rawMessage: String): String =
+        Regex("""(?i)\b(?:from|debited\s+from)\s+(?:your\s+)?(?:mashreq\s+)?(?:account|ac)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\b""")
+            .find(rawMessage)
+            ?.groupValues
+            ?.getOrNull(1)
+            .orEmpty()
+
+    private fun extractTargetAccountSuffix(rawMessage: String): String =
+        Regex("""(?i)\b(?:your\s+)?(?:ac|account)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\s+is\s+credited\b""")
+            .find(rawMessage)
+            ?.groupValues
+            ?.getOrNull(1)
+            .orEmpty()
+
+    private fun extractCardSuffix(rawMessage: String): String =
+        Regex("""(?i)\b(?:card\s+ending|ending\s+with)\s*([0-9]{4})\b""")
+            .find(rawMessage)
+            ?.groupValues
+            ?.getOrNull(1)
+            .orEmpty()
+
+    private fun reviewNoteFor(
+        parsedType: ParsedBankMessageType,
+        inference: BalanceDebitInference?,
+        availableBalance: Double?,
+        isAccountToAccountTransfer: Boolean,
+        savingsBalanceConflictNote: String
+    ): String =
+        when {
+            inference != null -> inference.note
+            savingsBalanceConflictNote.isNotBlank() -> savingsBalanceConflictNote
+            parsedType == ParsedBankMessageType.SAVINGS_TRANSFER && availableBalance == null ->
+                "Savings balance was not updated because this SMS did not include an available balance."
+            parsedType == ParsedBankMessageType.INTERNAL_TRANSFER_OUT && isAccountToAccountTransfer ->
+                "Transfer to savings / needs matching credit."
+            else -> ""
+        }
+
+    private fun savingsBalanceConflictNote(
+        parsedType: ParsedBankMessageType,
+        latestBalances: List<AccountBalanceSnapshot>,
+        availableBalance: Double?,
+        amount: Double?
+    ): String {
+        if (parsedType != ParsedBankMessageType.SAVINGS_TRANSFER ||
+            availableBalance == null ||
+            amount == null
+        ) {
+            return ""
+        }
+        val previousSavingsBalance = latestBalances
+            .filter { it.accountKind == AccountKind.SAVINGS && it.currency == FinanceDefaults.DEFAULT_CURRENCY }
+            .maxWithOrNull(
+                compareBy<AccountBalanceSnapshot> { it.messageTimestampMillis }
+                    .thenBy { it.createdAtMillis }
+            )
+            ?.availableBalance
+            ?: return ""
+        val delta = availableBalance - previousSavingsBalance
+        return if (kotlin.math.abs(delta - amount) > 1.0) {
+            "Savings balance is outdated or lower than this transfer. Please review/update balance."
+        } else {
+            ""
+        }
+    }
+
+    private fun String.sanitizeSuffix(): String =
+        filter { it.isDigit() }.takeLast(4)
+
+    private fun String.matchesSuffix(candidate: String): Boolean {
+        val expected = sanitizeSuffix()
+        val actual = candidate.sanitizeSuffix()
+        return expected.length == 4 && actual.length == 4 && expected == actual
+    }
+
+    private fun String.normalizedMerchantName(): String =
+        trim()
+            .lowercase(Locale.US)
+            .replace(Regex("""[^a-z0-9]+"""), " ")
+            .trim()
+
+    private fun String.sharedTokenCount(other: String): Int {
+        val left = split(" ").filter { it.length >= 3 }.toSet()
+        val right = other.split(" ").filter { it.length >= 3 }.toSet()
+        return left.intersect(right).size
+    }
+
     private fun isBalanceContext(prefix: String, context: String): Boolean {
         val balancePrefix = Regex(
-            """(?i)(?:available|avail|avl|current)\s+(?:balance|bal|limit)\s*[:\-]?$|(?:balance|bal)\s*[:\-]?$"""
+            """(?i)(?:available|avail|avl|current)\s+(?:balance|bal|limit)\s*(?:is)?\s*[:\-]?$|(?:balance|bal)\s*(?:is)?\s*[:\-]?$"""
         )
         return balancePrefix.containsMatchIn(prefix.trim()) ||
-            context.contains(Regex("""(?i)\b(?:available|avail|avl|current)\s+(?:balance|bal|limit)\s*[:\-]?\s*$""")) ||
-            context.contains(Regex("""(?i)\b(?:balance|bal)\s*[:\-]?\s*$"""))
+            context.contains(Regex("""(?i)\b(?:available|avail|avl|current)\s+(?:balance|bal|limit)\s*(?:is)?\s*[:\-]?\s*$""")) ||
+            context.contains(Regex("""(?i)\b(?:balance|bal)\s*(?:is)?\s*[:\-]?\s*$"""))
     }
 
     private fun mergedKeywords(vararg keywordGroups: List<String>): List<String> =
@@ -532,7 +848,7 @@ class BankMessageParser {
             .distinctBy { it.lowercase(Locale.US) }
 
     private fun String.containsMoneyLike(): Boolean =
-        contains(Regex("""(?i)\b(AED|DHS|DIRHAMS?|USD|SAR|EUR|GBP)\b|[0-9][0-9,]*(?:\.\d{1,2})?"""))
+        contains(Regex("""(?i)\b(AED|DHS|DIRHAMS?|USD|SAR|EUR|GBP)\b|(?:[0-9][0-9,]*(?:\.\d{1,2})?|\.\d{1,2})"""))
 
     private fun String.containsDateLike(): Boolean =
         contains(Regex("""\b\d{1,4}[/-]\d{1,2}[/-]\d{1,4}\b"""))
@@ -580,7 +896,7 @@ class BankMessageParser {
     )
 
     private companion object {
-        const val INFERRED_BALANCE_NOTE = "AED amount inferred from balance change."
+        const val INFERRED_BALANCE_NOTE = "AED debit inferred from balance change; review before saving."
         const val MAX_REASONABLE_INFERRED_DEBIT = 10_000.0
 
         val STRONG_SAVINGS_TRANSFER_KEYWORDS = listOf(

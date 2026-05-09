@@ -19,6 +19,7 @@ import com.musab.niqdah.domain.finance.FinanceDates
 import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.FinanceRepository
 import com.musab.niqdah.domain.finance.IncomeTransaction
+import com.musab.niqdah.domain.finance.MerchantRule
 import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.ParsedBankMessage
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
@@ -35,6 +36,7 @@ data class FinanceUiState(
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val errorMessage: String? = null,
+    val statusMessage: String? = null,
     val data: FinanceData = FinanceData.empty(),
     val dashboard: DashboardMetrics = FinanceCalculator.dashboard(FinanceData.empty(), FinanceDates.currentYearMonth()),
     val selectedTransactionMonth: String = FinanceDates.currentYearMonth(),
@@ -108,7 +110,7 @@ class FinanceViewModel(
     }
 
     fun clearError() {
-        _uiState.update { it.copy(errorMessage = null) }
+        _uiState.update { it.copy(errorMessage = null, statusMessage = null) }
     }
 
     fun saveTransaction(
@@ -168,13 +170,18 @@ class FinanceViewModel(
             manualSenderName = senderInput,
             settings = state.data.bankMessageSettings,
             categories = state.data.categories,
-            latestBalances = state.data.accountBalanceSnapshots
+            latestBalances = state.data.accountBalanceSnapshots,
+            merchantRules = state.data.merchantRules
         )
     }
 
     fun previewAiFinanceDraftAction(messageInput: String): AiFinanceDraftAction? {
         val parsed = previewBankMessage(senderInput = "", messageInput = messageInput)
-        if (parsed.amount == null && parsed.type == ParsedBankMessageType.UNKNOWN) return null
+        if (parsed.type == ParsedBankMessageType.INFORMATIONAL ||
+            (parsed.amount == null && parsed.type == ParsedBankMessageType.UNKNOWN)
+        ) {
+            return null
+        }
         return parsed.toAiFinanceDraftAction()
     }
 
@@ -238,6 +245,7 @@ class FinanceViewModel(
         val currency = currencyInput.trim().uppercase(Locale.US).ifBlank { _uiState.value.data.profile.currency }
         val validationError = when {
             type == ParsedBankMessageType.UNKNOWN -> "Choose a message type before saving."
+            type == ParsedBankMessageType.INFORMATIONAL -> "This message looks informational, not a transaction."
             amount == null || amount <= 0.0 -> "Enter a valid imported amount."
             occurredAt == null -> "Enter the import date as YYYY-MM-DD."
             type == ParsedBankMessageType.EXPENSE && categoryId.isNullOrBlank() -> "Choose a category."
@@ -265,12 +273,20 @@ class FinanceViewModel(
                 senderName = senderName,
                 now = now
             )
+            learnMerchantRuleFromInputs(
+                type = type,
+                merchantName = description,
+                categoryId = categoryId,
+                necessity = necessity
+            )
         }
     }
 
     fun savePendingBankImport(pendingImport: PendingBankImport) {
         val amount = pendingImport.amount
         val validationError = when {
+            pendingImport.type == ParsedBankMessageType.INFORMATIONAL ->
+                pendingImport.ignoredReason.ifBlank { "This message looks informational, not a transaction." }
             pendingImport.type == ParsedBankMessageType.UNKNOWN -> "Choose a message type before saving."
             amount == null || amount <= 0.0 -> "Enter a valid imported amount."
             pendingImport.type == ParsedBankMessageType.EXPENSE &&
@@ -297,6 +313,8 @@ class FinanceViewModel(
                 senderName = pendingImport.senderName,
                 now = now
             )
+            learnMerchantRuleIfNeeded(pendingImport)
+            pairMatchingInternalTransferIfNeeded(pendingImport, now)
             financeRepository.deletePendingBankImport(pendingImport.id)
             financeRepository.upsertBankMessageImportHistory(
                 BankMessageImportHistory(
@@ -306,11 +324,15 @@ class FinanceViewModel(
                     updatedAtMillis = now
                 )
             )
+            _uiState.update {
+                it.copy(statusMessage = pendingImport.saveSuccessMessage(), errorMessage = null)
+            }
         }
     }
 
     fun updatePendingBankImport(pendingImport: PendingBankImport) {
         runSave {
+            learnMerchantRuleIfNeeded(pendingImport)
             financeRepository.upsertPendingBankImport(
                 pendingImport.copy(updatedAtMillis = System.currentTimeMillis())
             )
@@ -447,7 +469,10 @@ class FinanceViewModel(
         isSavingsEnabled: Boolean,
         debitKeywordsInput: String,
         creditKeywordsInput: String,
-        savingsTransferKeywordsInput: String
+        savingsTransferKeywordsInput: String,
+        dailyUseAccountSuffix: String = "",
+        savingsAccountSuffix: String = "",
+        isMerchantLearningEnabled: Boolean = true
     ) {
         val currentSettings = _uiState.value.data.bankMessageSettings
         val settings = BankMessageParserSettings(
@@ -461,8 +486,12 @@ class FinanceViewModel(
             ),
             isAutomaticSmsImportEnabled = isAutomaticSmsImportEnabled,
             requireReviewBeforeSaving = true,
+            dailyUseAccountSuffix = dailyUseAccountSuffix.trim().filter { it.isDigit() }.takeLast(4),
+            savingsAccountSuffix = savingsAccountSuffix.trim().filter { it.isDigit() }.takeLast(4),
+            isMerchantLearningEnabled = isMerchantLearningEnabled,
             lastIgnoredSender = currentSettings.lastIgnoredSender,
             lastParsedBankMessageAtMillis = currentSettings.lastParsedBankMessageAtMillis,
+            lastIgnoredReason = currentSettings.lastIgnoredReason,
             debitKeywords = keywordListOrDefault(
                 debitKeywordsInput,
                 FinanceDefaults.DEFAULT_DEBIT_KEYWORDS
@@ -569,6 +598,16 @@ class FinanceViewModel(
                     now = now
                 )
             }
+            ParsedBankMessageType.INTERNAL_TRANSFER_OUT -> {
+                saveSavingsContribution(
+                    amount = amount,
+                    currency = currency,
+                    description = description.trim().ifBlank { "Imported internal transfer" },
+                    occurredAtMillis = occurredAtMillis,
+                    now = now
+                )
+            }
+            ParsedBankMessageType.INFORMATIONAL,
             ParsedBankMessageType.UNKNOWN -> Unit
         }
     }
@@ -579,7 +618,7 @@ class FinanceViewModel(
         block: suspend () -> Unit
     ) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isSaving = true, errorMessage = null) }
+            _uiState.update { it.copy(isSaving = true, errorMessage = null, statusMessage = null) }
             runCatching { block() }
                 .onSuccess { onSuccess?.invoke() }
                 .onFailure { error ->
@@ -594,6 +633,94 @@ class FinanceViewModel(
     private fun String.toMoneyOrNull(): Double? =
         trim().replace(",", "").toDoubleOrNull()
 
+    private suspend fun learnMerchantRuleIfNeeded(pendingImport: PendingBankImport) {
+        val state = _uiState.value
+        if (!state.data.bankMessageSettings.isMerchantLearningEnabled) return
+        if (pendingImport.type != ParsedBankMessageType.EXPENSE) return
+        val merchantName = pendingImport.merchantName.ifBlank { pendingImport.description }
+        val normalized = merchantName.normalizedMerchantName()
+        if (normalized.isBlank() || pendingImport.suggestedCategoryId.isNullOrBlank()) return
+        val category = state.data.categories.firstOrNull { it.id == pendingImport.suggestedCategoryId }
+        val existing = state.data.merchantRules.firstOrNull { it.normalizedMerchantName == normalized }
+        financeRepository.upsertMerchantRule(
+            MerchantRule(
+                normalizedMerchantName = normalized,
+                merchantName = merchantName.trim(),
+                categoryId = pendingImport.suggestedCategoryId,
+                categoryName = category?.name ?: pendingImport.suggestedCategoryName,
+                necessity = pendingImport.suggestedNecessity,
+                lastUpdatedMillis = System.currentTimeMillis(),
+                timesConfirmed = (existing?.timesConfirmed ?: 0) + 1
+            )
+        )
+    }
+
+    private suspend fun learnMerchantRuleFromInputs(
+        type: ParsedBankMessageType,
+        merchantName: String,
+        categoryId: String?,
+        necessity: NecessityLevel
+    ) {
+        val state = _uiState.value
+        if (!state.data.bankMessageSettings.isMerchantLearningEnabled) return
+        if (type != ParsedBankMessageType.EXPENSE || categoryId.isNullOrBlank()) return
+        val normalized = merchantName.normalizedMerchantName()
+        if (normalized.isBlank()) return
+        val category = state.data.categories.firstOrNull { it.id == categoryId }
+        val existing = state.data.merchantRules.firstOrNull { it.normalizedMerchantName == normalized }
+        financeRepository.upsertMerchantRule(
+            MerchantRule(
+                normalizedMerchantName = normalized,
+                merchantName = merchantName.trim(),
+                categoryId = categoryId,
+                categoryName = category?.name ?: "Uncategorized",
+                necessity = necessity,
+                lastUpdatedMillis = System.currentTimeMillis(),
+                timesConfirmed = (existing?.timesConfirmed ?: 0) + 1
+            )
+        )
+    }
+
+    private suspend fun pairMatchingInternalTransferIfNeeded(
+        pendingImport: PendingBankImport,
+        now: Long
+    ) {
+        if (pendingImport.type != ParsedBankMessageType.SAVINGS_TRANSFER &&
+            pendingImport.type != ParsedBankMessageType.INTERNAL_TRANSFER_OUT
+        ) {
+            return
+        }
+        val amount = pendingImport.amount ?: return
+        val dayMillis = 24 * 60 * 60 * 1000L
+        val paired = _uiState.value.data.pendingBankImports.firstOrNull { candidate ->
+            candidate.id != pendingImport.id &&
+                candidate.amount == amount &&
+                candidate.currency == pendingImport.currency &&
+                kotlin.math.abs(candidate.occurredAtMillis - pendingImport.occurredAtMillis) <= dayMillis &&
+                setOf(candidate.type, pendingImport.type) == setOf(
+                    ParsedBankMessageType.SAVINGS_TRANSFER,
+                    ParsedBankMessageType.INTERNAL_TRANSFER_OUT
+                )
+        } ?: return
+
+        financeRepository.deletePendingBankImport(paired.id)
+        financeRepository.upsertBankMessageImportHistory(
+            BankMessageImportHistory(
+                messageHash = paired.messageHash,
+                status = BankMessageImportStatus.LINKED,
+                senderName = paired.senderName,
+                updatedAtMillis = now
+            )
+        )
+    }
+
+    private fun PendingBankImport.saveSuccessMessage(): String =
+        if (type == ParsedBankMessageType.SAVINGS_TRANSFER && availableBalance == null) {
+            "Saved transfer. Savings balance was not updated because this SMS did not include an available balance."
+        } else {
+            "Saved successfully."
+        }
+
     private fun keywordListOrDefault(input: String, default: List<String>): List<String> =
         input.split(",")
             .map { it.trim() }
@@ -602,6 +729,12 @@ class FinanceViewModel(
 
     private fun savingsImportTransactionId(yearMonth: String): String =
         "bank-message-savings-$yearMonth"
+
+    private fun String.normalizedMerchantName(): String =
+        trim()
+            .lowercase(Locale.US)
+            .replace(Regex("""[^a-z0-9]+"""), " ")
+            .trim()
 
     private fun ParsedBankMessage.toAiFinanceDraftAction(): AiFinanceDraftAction =
         AiFinanceDraftAction(

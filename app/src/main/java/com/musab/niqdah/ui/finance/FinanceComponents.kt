@@ -114,12 +114,28 @@ fun FinanceProgressCard(
 
 @Composable
 fun ErrorBanner(message: String?, onDismiss: () -> Unit) {
+    StatusBanner(message = message, isError = true, onDismiss = onDismiss)
+}
+
+@Composable
+fun StatusBanner(message: String?, isError: Boolean = false, onDismiss: () -> Unit) {
     if (message == null) return
+
+    val containerColor = if (isError) {
+        MaterialTheme.colorScheme.errorContainer
+    } else {
+        MaterialTheme.colorScheme.secondaryContainer
+    }
+    val contentColor = if (isError) {
+        MaterialTheme.colorScheme.onErrorContainer
+    } else {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.errorContainer
+        color = containerColor
     ) {
         Row(
             modifier = Modifier.padding(start = 14.dp, top = 8.dp, bottom = 8.dp, end = 6.dp),
@@ -128,14 +144,14 @@ fun ErrorBanner(message: String?, onDismiss: () -> Unit) {
             Text(
                 text = message,
                 modifier = Modifier.weight(1f),
-                color = MaterialTheme.colorScheme.onErrorContainer,
+                color = contentColor,
                 style = MaterialTheme.typography.bodyMedium
             )
             IconButton(onClick = onDismiss) {
                 Icon(
                     imageVector = Icons.Rounded.Close,
                     contentDescription = "Dismiss",
-                    tint = MaterialTheme.colorScheme.onErrorContainer
+                    tint = contentColor
                 )
             }
         }

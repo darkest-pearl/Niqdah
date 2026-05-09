@@ -157,7 +157,23 @@ fun MainShell(
                 padding = padding,
                 onUpdateProfileAndDebt = financeViewModel::updateProfileAndDebt,
                 onUpdateCategoryBudgets = financeViewModel::updateCategoryBudgets,
-                onUpdateBankMessageSettings = financeViewModel::updateBankMessageSettings,
+                onUpdateBankMessageSettings = { automatic, dailySender, dailyEnabled, savingsSender,
+                    savingsEnabled, debitKeywords, creditKeywords, savingsKeywords,
+                    dailySuffix, savingsSuffix, learnFromEdits ->
+                    financeViewModel.updateBankMessageSettings(
+                        isAutomaticSmsImportEnabled = automatic,
+                        dailySenderName = dailySender,
+                        isDailyEnabled = dailyEnabled,
+                        savingsSenderName = savingsSender,
+                        isSavingsEnabled = savingsEnabled,
+                        debitKeywordsInput = debitKeywords,
+                        creditKeywordsInput = creditKeywords,
+                        savingsTransferKeywordsInput = savingsKeywords,
+                        dailyUseAccountSuffix = dailySuffix,
+                        savingsAccountSuffix = savingsSuffix,
+                        isMerchantLearningEnabled = learnFromEdits
+                    )
+                },
                 onLogout = onLogout,
                 onClearError = financeViewModel::clearError
             )

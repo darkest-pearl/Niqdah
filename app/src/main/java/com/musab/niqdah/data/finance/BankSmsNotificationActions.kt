@@ -11,12 +11,27 @@ internal object BankSmsNotificationActions {
 }
 
 internal object BankSmsNotificationActionRules {
-    fun canSaveFromNotification(pendingImport: PendingBankImport): Boolean {
+    fun saveDecision(pendingImport: PendingBankImport): SaveDecision {
         val amount = pendingImport.amount
-        return pendingImport.type != ParsedBankMessageType.UNKNOWN &&
-            amount != null &&
-            amount > 0.0 &&
-            (pendingImport.type != ParsedBankMessageType.EXPENSE ||
-                !pendingImport.suggestedCategoryId.isNullOrBlank())
+        return when {
+            pendingImport.type == ParsedBankMessageType.INFORMATIONAL ->
+                SaveDecision.Blocked("This message looks informational, not a transaction.")
+            pendingImport.type == ParsedBankMessageType.UNKNOWN ->
+                SaveDecision.Blocked("This message needs review before saving.")
+            amount == null || amount <= 0.0 ->
+                SaveDecision.Blocked("Enter a valid imported amount.")
+            pendingImport.type == ParsedBankMessageType.EXPENSE &&
+                pendingImport.suggestedCategoryId.isNullOrBlank() ->
+                SaveDecision.Blocked("Choose a category before saving.")
+            else -> SaveDecision.Allowed
+        }
+    }
+
+    fun canSaveFromNotification(pendingImport: PendingBankImport): Boolean =
+        saveDecision(pendingImport) == SaveDecision.Allowed
+
+    sealed interface SaveDecision {
+        data object Allowed : SaveDecision
+        data class Blocked(val reason: String) : SaveDecision
     }
 }

@@ -93,6 +93,7 @@ data class FinanceData(
     val incomeTransactions: List<IncomeTransaction>,
     val pendingBankImports: List<PendingBankImport>,
     val accountBalanceSnapshots: List<AccountBalanceSnapshot>,
+    val merchantRules: List<MerchantRule>,
     val goals: List<SavingsGoal>,
     val debt: DebtTracker,
     val bankMessageSettings: BankMessageParserSettings
@@ -123,6 +124,7 @@ data class FinanceData(
                 incomeTransactions = emptyList(),
                 pendingBankImports = emptyList(),
                 accountBalanceSnapshots = emptyList(),
+                merchantRules = emptyList(),
                 goals = emptyList(),
                 debt = FinanceDefaults.debtTracker(),
                 bankMessageSettings = FinanceDefaults.bankMessageParserSettings()
@@ -145,13 +147,27 @@ data class AccountBalanceSnapshot(
     val createdAtMillis: Long
 )
 
+data class MerchantRule(
+    val normalizedMerchantName: String,
+    val merchantName: String,
+    val categoryId: String,
+    val categoryName: String,
+    val necessity: NecessityLevel,
+    val lastUpdatedMillis: Long,
+    val timesConfirmed: Int = 1
+)
+
 data class BankMessageParserSettings(
     val dailyUseSource: BankMessageSourceSettings = BankMessageSourceSettings(),
     val savingsSource: BankMessageSourceSettings = BankMessageSourceSettings(),
     val isAutomaticSmsImportEnabled: Boolean = false,
     val requireReviewBeforeSaving: Boolean = true,
+    val dailyUseAccountSuffix: String = "",
+    val savingsAccountSuffix: String = "",
+    val isMerchantLearningEnabled: Boolean = true,
     val lastIgnoredSender: String = "",
     val lastParsedBankMessageAtMillis: Long = 0L,
+    val lastIgnoredReason: String = "",
     val debitKeywords: List<String> = FinanceDefaults.DEFAULT_DEBIT_KEYWORDS,
     val creditKeywords: List<String> = FinanceDefaults.DEFAULT_CREDIT_KEYWORDS,
     val savingsTransferKeywords: List<String> = FinanceDefaults.DEFAULT_SAVINGS_TRANSFER_KEYWORDS
@@ -172,6 +188,8 @@ enum class ParsedBankMessageType(val label: String) {
     EXPENSE("Expense"),
     INCOME("Income"),
     SAVINGS_TRANSFER("Savings transfer"),
+    INTERNAL_TRANSFER_OUT("Internal transfer out"),
+    INFORMATIONAL("Informational"),
     UNKNOWN("Unknown")
 }
 
@@ -195,6 +213,11 @@ data class ParsedBankMessage(
     val inferredAccountDebit: Double? = null,
     val isAmountInferredFromBalance: Boolean = false,
     val reviewNote: String = "",
+    val merchantName: String = "",
+    val sourceAccountSuffix: String = "",
+    val targetAccountSuffix: String = "",
+    val ignoredReason: String = "",
+    val pairedTransferStatus: String = "",
     val description: String = "",
     val occurredAtMillis: Long,
     val suggestedCategoryId: String? = null,
@@ -219,6 +242,11 @@ data class PendingBankImport(
     val inferredAccountDebit: Double?,
     val isAmountInferredFromBalance: Boolean,
     val reviewNote: String,
+    val merchantName: String,
+    val sourceAccountSuffix: String,
+    val targetAccountSuffix: String,
+    val ignoredReason: String,
+    val pairedTransferStatus: String,
     val description: String,
     val occurredAtMillis: Long,
     val suggestedCategoryId: String?,
@@ -240,7 +268,9 @@ data class BankMessageImportHistory(
 enum class BankMessageImportStatus {
     PENDING,
     SAVED,
-    DISMISSED
+    DISMISSED,
+    IGNORED,
+    LINKED
 }
 
 data class CategorySpend(
