@@ -8,8 +8,11 @@ import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.musab.niqdah.core.firebase.FirebaseProvider
 import com.musab.niqdah.data.firestore.FirestoreCollections
+import com.musab.niqdah.domain.finance.BankMessageImportHistory
+import com.musab.niqdah.domain.finance.BankMessageImportStatus
 import com.musab.niqdah.domain.finance.BankMessageParserSettings
 import com.musab.niqdah.domain.finance.BankMessageSourceSettings
+import com.musab.niqdah.domain.finance.BankMessageSourceType
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.CategoryType
 import com.musab.niqdah.domain.finance.DebtTracker
@@ -20,6 +23,9 @@ import com.musab.niqdah.domain.finance.FinanceRepository
 import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.MonthlySnapshot
 import com.musab.niqdah.domain.finance.NecessityLevel
+import com.musab.niqdah.domain.finance.ParsedBankMessageConfidence
+import com.musab.niqdah.domain.finance.ParsedBankMessageType
+import com.musab.niqdah.domain.finance.PendingBankImport
 import com.musab.niqdah.domain.finance.SavingsGoal
 import com.musab.niqdah.domain.finance.UserProfile
 import kotlinx.coroutines.channels.awaitClose
@@ -80,13 +86,15 @@ class FirebaseFinanceRepository(
             observeProfile(db),
             observeCategories(db),
             observeTransactions(db),
-            observeIncomeTransactions(db)
-        ) { profile, categories, transactions, incomeTransactions ->
+            observeIncomeTransactions(db),
+            observePendingBankImports(db)
+        ) { profile, categories, transactions, incomeTransactions, pendingBankImports ->
             FinanceCore(
                 profile = profile,
                 categories = categories.ifEmpty { FinanceDefaults.budgetCategories() },
                 transactions = transactions,
-                incomeTransactions = incomeTransactions
+                incomeTransactions = incomeTransactions,
+                pendingBankImports = pendingBankImports
             )
         }
 
@@ -101,6 +109,7 @@ class FirebaseFinanceRepository(
                 categories = core.categories,
                 transactions = core.transactions,
                 incomeTransactions = core.incomeTransactions,
+                pendingBankImports = core.pendingBankImports,
                 goals = goals.ifEmpty { FinanceDefaults.savingsGoals() },
                 debt = debt,
                 bankMessageSettings = bankMessageSettings
@@ -136,6 +145,24 @@ class FirebaseFinanceRepository(
 
     override suspend fun deleteIncomeTransaction(transactionId: String) {
         incomeTransactionsCollection(requireFirestore()).document(transactionId).delete().awaitValue()
+    }
+
+    override suspend fun upsertPendingBankImport(pendingImport: PendingBankImport) {
+        pendingBankImportsCollection(requireFirestore())
+            .document(pendingImport.id)
+            .set(pendingImport.toFirestore())
+            .awaitValue()
+    }
+
+    override suspend fun deletePendingBankImport(importId: String) {
+        pendingBankImportsCollection(requireFirestore()).document(importId).delete().awaitValue()
+    }
+
+    override suspend fun upsertBankMessageImportHistory(history: BankMessageImportHistory) {
+        bankMessageImportHistoryCollection(requireFirestore())
+            .document(history.messageHash)
+            .set(history.toFirestore())
+            .awaitValue()
     }
 
     override suspend fun upsertGoal(goal: SavingsGoal) {
@@ -217,6 +244,22 @@ class FirebaseFinanceRepository(
             awaitClose { registration.remove() }
         }
 
+    private fun observePendingBankImports(db: FirebaseFirestore): Flow<List<PendingBankImport>> =
+        callbackFlow {
+            val registration = pendingBankImportsCollection(db).addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val pendingImports = snapshot?.documents
+                    ?.map { it.toPendingBankImport() }
+                    ?.sortedByDescending { it.receivedAtMillis }
+                    ?: emptyList()
+                trySend(pendingImports)
+            }
+            awaitClose { registration.remove() }
+        }
+
     private fun observeGoals(db: FirebaseFirestore): Flow<List<SavingsGoal>> =
         callbackFlow {
             val registration = goalsCollection(db).addSnapshotListener { snapshot, error ->
@@ -281,6 +324,12 @@ class FirebaseFinanceRepository(
 
     private fun incomeTransactionsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.INCOME_TRANSACTIONS)
+
+    private fun pendingBankImportsCollection(db: FirebaseFirestore): CollectionReference =
+        userDocument(db).collection(FirestoreCollections.PENDING_BANK_IMPORTS)
+
+    private fun bankMessageImportHistoryCollection(db: FirebaseFirestore): CollectionReference =
+        userDocument(db).collection(FirestoreCollections.BANK_MESSAGE_IMPORT_HISTORY)
 
     private fun goalsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.SAVINGS_GOALS)
@@ -350,6 +399,35 @@ class FirebaseFinanceRepository(
             "updatedAtMillis" to updatedAtMillis
         )
 
+    private fun PendingBankImport.toFirestore(): Map<String, Any?> =
+        mapOf(
+            "messageHash" to messageHash,
+            "senderName" to senderName,
+            "rawMessage" to rawMessage,
+            "sourceType" to sourceType.name,
+            "type" to type.name,
+            "amount" to amount,
+            "currency" to currency,
+            "availableBalance" to availableBalance,
+            "description" to description,
+            "occurredAtMillis" to occurredAtMillis,
+            "suggestedCategoryId" to suggestedCategoryId,
+            "suggestedCategoryName" to suggestedCategoryName,
+            "suggestedNecessity" to suggestedNecessity.name,
+            "confidence" to confidence.name,
+            "receivedAtMillis" to receivedAtMillis,
+            "createdAtMillis" to createdAtMillis,
+            "updatedAtMillis" to updatedAtMillis
+        )
+
+    private fun BankMessageImportHistory.toFirestore(): Map<String, Any> =
+        mapOf(
+            "messageHash" to messageHash,
+            "status" to status.name,
+            "senderName" to senderName,
+            "updatedAtMillis" to updatedAtMillis
+        )
+
     private fun SavingsGoal.toFirestore(): Map<String, Any> =
         mapOf(
             "name" to name,
@@ -385,6 +463,10 @@ class FirebaseFinanceRepository(
         mapOf(
             "dailyUseSource" to dailyUseSource.toFirestore(),
             "savingsSource" to savingsSource.toFirestore(),
+            "isAutomaticSmsImportEnabled" to isAutomaticSmsImportEnabled,
+            "requireReviewBeforeSaving" to requireReviewBeforeSaving,
+            "lastIgnoredSender" to lastIgnoredSender,
+            "lastParsedBankMessageAtMillis" to lastParsedBankMessageAtMillis,
             "debitKeywords" to debitKeywords,
             "creditKeywords" to creditKeywords,
             "savingsTransferKeywords" to savingsTransferKeywords
@@ -444,6 +526,28 @@ class FirebaseFinanceRepository(
             updatedAtMillis = long("updatedAtMillis")
         )
 
+    private fun DocumentSnapshot.toPendingBankImport(): PendingBankImport =
+        PendingBankImport(
+            id = id,
+            messageHash = getString("messageHash") ?: id,
+            senderName = getString("senderName") ?: "",
+            rawMessage = getString("rawMessage") ?: "",
+            sourceType = bankMessageSourceType(getString("sourceType")),
+            type = parsedBankMessageType(getString("type")),
+            amount = nullableDouble("amount"),
+            currency = getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
+            availableBalance = nullableDouble("availableBalance"),
+            description = getString("description") ?: "",
+            occurredAtMillis = long("occurredAtMillis"),
+            suggestedCategoryId = getString("suggestedCategoryId"),
+            suggestedCategoryName = getString("suggestedCategoryName") ?: "Uncategorized",
+            suggestedNecessity = necessityLevel(getString("suggestedNecessity")),
+            confidence = parsedBankMessageConfidence(getString("confidence")),
+            receivedAtMillis = long("receivedAtMillis"),
+            createdAtMillis = long("createdAtMillis"),
+            updatedAtMillis = long("updatedAtMillis")
+        )
+
     private fun DocumentSnapshot.toSavingsGoal(): SavingsGoal =
         SavingsGoal(
             id = id,
@@ -474,6 +578,15 @@ class FirebaseFinanceRepository(
                 value = get("savingsSource") as? Map<String, Any>,
                 default = defaults.savingsSource
             ),
+            isAutomaticSmsImportEnabled = getBoolean("isAutomaticSmsImportEnabled")
+                ?: defaults.isAutomaticSmsImportEnabled,
+            requireReviewBeforeSaving = getBoolean("requireReviewBeforeSaving")
+                ?: defaults.requireReviewBeforeSaving,
+            lastIgnoredSender = getString("lastIgnoredSender") ?: defaults.lastIgnoredSender,
+            lastParsedBankMessageAtMillis = long(
+                "lastParsedBankMessageAtMillis",
+                defaults.lastParsedBankMessageAtMillis
+            ),
             debitKeywords = stringList("debitKeywords", defaults.debitKeywords),
             creditKeywords = stringList("creditKeywords", defaults.creditKeywords),
             savingsTransferKeywords = stringList("savingsTransferKeywords", defaults.savingsTransferKeywords)
@@ -482,6 +595,9 @@ class FirebaseFinanceRepository(
 
     private fun DocumentSnapshot.double(field: String, default: Double = 0.0): Double =
         (get(field) as? Number)?.toDouble() ?: default
+
+    private fun DocumentSnapshot.nullableDouble(field: String): Double? =
+        (get(field) as? Number)?.toDouble()
 
     private fun DocumentSnapshot.long(field: String, default: Long = 0L): Long =
         (get(field) as? Number)?.toLong() ?: default
@@ -508,11 +624,22 @@ class FirebaseFinanceRepository(
 
     private fun necessityLevel(value: String?): NecessityLevel =
         NecessityLevel.entries.firstOrNull { it.name == value } ?: NecessityLevel.NECESSARY
+
+    private fun bankMessageSourceType(value: String?): BankMessageSourceType =
+        BankMessageSourceType.entries.firstOrNull { it.name == value } ?: BankMessageSourceType.UNKNOWN
+
+    private fun parsedBankMessageType(value: String?): ParsedBankMessageType =
+        ParsedBankMessageType.entries.firstOrNull { it.name == value } ?: ParsedBankMessageType.UNKNOWN
+
+    private fun parsedBankMessageConfidence(value: String?): ParsedBankMessageConfidence =
+        ParsedBankMessageConfidence.entries.firstOrNull { it.name == value }
+            ?: ParsedBankMessageConfidence.LOW
 }
 
 private data class FinanceCore(
     val profile: UserProfile,
     val categories: List<BudgetCategory>,
     val transactions: List<ExpenseTransaction>,
-    val incomeTransactions: List<IncomeTransaction>
+    val incomeTransactions: List<IncomeTransaction>,
+    val pendingBankImports: List<PendingBankImport>
 )

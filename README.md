@@ -2,7 +2,7 @@
 
 Niqdah is a personal Android finance app for disciplined budgeting and wedding preparation, built with Kotlin, Jetpack Compose, Material 3, Firebase Auth, Firestore, and Firebase Cloud Functions.
 
-Phase 4A includes email/password auth, a manual finance engine, dashboard calculations, transaction tracking, savings envelopes, debt tracking, editable settings, persistent Firestore data under each authenticated user, a secure AI Chat backend, and manual bank message import from copy-pasted text.
+Phase 4B includes email/password auth, a manual finance engine, dashboard calculations, transaction tracking, savings envelopes, debt tracking, editable settings, persistent Firestore data under each authenticated user, a secure AI Chat backend, manual bank message import, and experimental review-first incoming SMS import for selected bank senders.
 
 ## Tech Stack
 
@@ -97,6 +97,8 @@ users/{uid}/finance/bankMessageSettings
 users/{uid}/budgetCategories/{categoryId}
 users/{uid}/transactions/{transactionId}
 users/{uid}/incomeTransactions/{transactionId}
+users/{uid}/pendingBankImports/{importHash}
+users/{uid}/bankMessageImportHistory/{importHash}
 users/{uid}/savingsGoals/{goalId}
 users/{uid}/monthlySnapshots/{yearMonth}
 ```
@@ -117,7 +119,24 @@ Settings includes **Bank Message Sources**:
 
 Daily-use debit messages save as expense transactions. Category inference is rule-based and falls back to **Uncategorized**. Savings transfer messages update the current month imported savings contribution and the marriage fund saved amount, helping show progress toward the monthly 1,700 AED marriage savings target. Credit messages save as income transaction records and are included in dashboard monthly income.
 
-SMS permissions are intentionally not part of Phase 4A. The Android manifest still does **not** request `READ_SMS`, `RECEIVE_SMS`, or notification listener access. Future automatic SMS or notification import should call the same `BankMessageParser` domain service after an explicit opt-in phase.
+Manual import remains available even when SMS permission is denied or automatic import is disabled.
+
+## Phase 4B Automatic Incoming SMS Import
+
+Phase 4B adds experimental incoming SMS import for a personal/dev APK. It requests `RECEIVE_SMS` only so Niqdah can react to new incoming SMS messages. It still does **not** request `READ_SMS`, so it cannot scan historical SMS inbox content.
+
+Automatic SMS import is opt-in from Settings. The app explains the permission as: “Niqdah can read new bank SMS messages from your selected senders to prepare expense and savings drafts.” The user can deny permission and continue using manual paste/import.
+
+Privacy and control rules:
+
+- Only messages from configured daily-use or savings bank senders are processed.
+- The receiver runs the local `BankMessageParser`; raw SMS is not logged and is never sent to OpenAI.
+- The backend cannot read SMS and does not write transactions.
+- Matching SMS messages create pending imports only. User review is required before saving.
+- Pending imports can be saved, edited, or dismissed from Transactions.
+- Duplicate protection uses a hash of sender, message body, and a rounded received timestamp.
+
+Tapping a bank-import notification opens the Transactions tab, where **Pending Bank Imports** shows sender, type, amount, currency, suggested category, necessity, date, confidence, and a hidden-by-default message body.
 
 ## Open And Run In Android Studio
 
@@ -145,6 +164,7 @@ app/src/main/java/com/musab/niqdah/
   data/ai/             Firebase callable AI chat repository
   data/finance/        Firestore finance repository and mappers
   data/firestore/      Firestore collection names for future data work
+  data/sms/            Incoming SMS receiver for review-first bank import
   domain/ai/           AI chat models and repository contract
   domain/auth/         Auth repository contract and auth state
   domain/finance/      Finance models, parser, defaults, repository contract, dates, calculations
@@ -175,6 +195,7 @@ Included:
 - Fixed expenses and category budgets
 - Manual transaction add, edit, delete, note, month filter, category filter, and necessity level
 - Manual bank message import with parser preview and editable fields
+- Experimental incoming SMS bank import with pending review drafts
 - Daily-use and savings bank message source settings
 - Rule-based category suggestions for pasted bank messages
 - Imported income records from credit messages
@@ -188,5 +209,5 @@ Included:
 
 Not included yet:
 
-- Automatic SMS permissions, SMS receivers, or notification listeners
+- READ_SMS inbox scanning or notification listeners
 - Payment, bank, or card integrations

@@ -18,7 +18,11 @@ Add manual copy-paste bank message parsing with source settings, editable previe
 
 ## Phase 4B Automatic Import
 
-Add opt-in SMS or notification import after the manual parser proves stable. This is the first phase that should consider Android SMS or notification-listener permissions.
+Add opt-in incoming SMS import after the manual parser proves stable. Phase 4B uses `RECEIVE_SMS` only for new incoming bank messages from configured senders, keeps `READ_SMS` out of the app, creates pending review drafts, and requires user review before saving. Complete for personal/dev APK experimentation.
+
+## Phase 4C Broader Import Options
+
+Consider notification-listener import, statement import, or inbox scan support only after explicit user opt-in and a separate privacy review.
 
 ## Phase 5 Reminders
 

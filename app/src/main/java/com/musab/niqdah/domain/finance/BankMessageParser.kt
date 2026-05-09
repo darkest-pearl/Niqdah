@@ -10,6 +10,44 @@ import java.time.format.DateTimeParseException
 import java.util.Locale
 
 class BankMessageParser {
+    fun parsePendingImport(
+        rawMessage: String,
+        senderName: String,
+        settings: BankMessageParserSettings,
+        categories: List<BudgetCategory>,
+        messageHash: String,
+        receivedAtMillis: Long,
+        nowMillis: Long = System.currentTimeMillis()
+    ): PendingBankImport {
+        val parsed = parse(
+            rawMessage = rawMessage,
+            manualSenderName = senderName,
+            settings = settings,
+            categories = categories,
+            nowMillis = receivedAtMillis
+        )
+        return PendingBankImport(
+            id = messageHash,
+            messageHash = messageHash,
+            senderName = parsed.senderName.ifBlank { senderName },
+            rawMessage = rawMessage,
+            sourceType = parsed.sourceType,
+            type = parsed.type,
+            amount = parsed.amount,
+            currency = parsed.currency,
+            availableBalance = parsed.availableBalance,
+            description = parsed.description,
+            occurredAtMillis = parsed.occurredAtMillis,
+            suggestedCategoryId = parsed.suggestedCategoryId,
+            suggestedCategoryName = parsed.suggestedCategoryName,
+            suggestedNecessity = parsed.suggestedNecessity,
+            confidence = parsed.confidence,
+            receivedAtMillis = receivedAtMillis,
+            createdAtMillis = nowMillis,
+            updatedAtMillis = nowMillis
+        )
+    }
+
     fun parse(
         rawMessage: String,
         manualSenderName: String,

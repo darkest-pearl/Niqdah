@@ -203,6 +203,8 @@ object FinanceDefaults {
         BankMessageParserSettings(
             dailyUseSource = BankMessageSourceSettings(senderName = "", isEnabled = true),
             savingsSource = BankMessageSourceSettings(senderName = "", isEnabled = true),
+            isAutomaticSmsImportEnabled = false,
+            requireReviewBeforeSaving = true,
             debitKeywords = DEFAULT_DEBIT_KEYWORDS,
             creditKeywords = DEFAULT_CREDIT_KEYWORDS,
             savingsTransferKeywords = DEFAULT_SAVINGS_TRANSFER_KEYWORDS

@@ -50,6 +50,7 @@ import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.ParsedBankMessage
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
+import com.musab.niqdah.domain.finance.PendingBankImport
 
 private sealed interface TransactionTimelineItem {
     val key: String
@@ -75,6 +76,9 @@ fun TransactionsScreen(
     onDeleteIncomeTransaction: (String) -> Unit,
     onPreviewBankMessage: (String, String) -> ParsedBankMessage,
     onSaveImportedBankMessage: (ParsedBankMessageType, String, String, String?, String, NecessityLevel, String, String) -> Unit,
+    onSavePendingBankImport: (PendingBankImport) -> Unit,
+    onUpdatePendingBankImport: (PendingBankImport) -> Unit,
+    onDismissPendingBankImport: (PendingBankImport) -> Unit,
     onMonthSelected: (String) -> Unit,
     onCategoryFilterSelected: (String?) -> Unit,
     onClearError: () -> Unit
@@ -145,6 +149,21 @@ fun TransactionsScreen(
                 onPreviewBankMessage = onPreviewBankMessage,
                 onSaveImportedBankMessage = onSaveImportedBankMessage
             )
+        }
+        if (uiState.data.pendingBankImports.isNotEmpty()) {
+            item {
+                Text(text = "Pending Bank Imports", style = MaterialTheme.typography.titleLarge)
+            }
+            items(uiState.data.pendingBankImports, key = { it.id }) { pendingImport ->
+                PendingBankImportCard(
+                    pendingImport = pendingImport,
+                    categories = categories,
+                    isSaving = uiState.isSaving,
+                    onSave = onSavePendingBankImport,
+                    onUpdate = onUpdatePendingBankImport,
+                    onDismiss = onDismissPendingBankImport
+                )
+            }
         }
 
         if (timelineItems.isEmpty()) {
@@ -369,6 +388,206 @@ private fun IncomeTransactionCard(
             }
         }
     }
+}
+
+@Composable
+private fun PendingBankImportCard(
+    pendingImport: PendingBankImport,
+    categories: List<BudgetCategory>,
+    isSaving: Boolean,
+    onSave: (PendingBankImport) -> Unit,
+    onUpdate: (PendingBankImport) -> Unit,
+    onDismiss: (PendingBankImport) -> Unit
+) {
+    var showMessage by remember(pendingImport.id) { mutableStateOf(false) }
+    var isEditing by remember(pendingImport.id) { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = pendingImport.senderName.ifBlank { "Bank SMS" },
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            PendingImportLine("Type", pendingImport.type.label)
+            PendingImportLine(
+                "Amount",
+                pendingImport.amount?.let { formatMoney(it, pendingImport.currency) } ?: "Missing"
+            )
+            PendingImportLine("Category", pendingImport.suggestedCategoryName)
+            PendingImportLine("Necessity", pendingImport.suggestedNecessity.label)
+            PendingImportLine("Date", formatTransactionDate(pendingImport.occurredAtMillis))
+            PendingImportLine("Confidence", pendingImport.confidence.label)
+            if (pendingImport.availableBalance != null) {
+                PendingImportLine(
+                    "Available balance",
+                    formatMoney(pendingImport.availableBalance, pendingImport.currency)
+                )
+            }
+            if (showMessage) {
+                Text(
+                    text = pendingImport.rawMessage,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            TextButton(onClick = { showMessage = !showMessage }) {
+                Text(if (showMessage) "Hide message" else "Show message")
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    modifier = Modifier.weight(1f),
+                    enabled = !isSaving,
+                    onClick = { onSave(pendingImport) }
+                ) {
+                    Text(if (isSaving) "Saving..." else "Save")
+                }
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = { isEditing = true }
+                ) {
+                    Text("Edit")
+                }
+                TextButton(onClick = { onDismiss(pendingImport) }) {
+                    Text("Dismiss")
+                }
+            }
+        }
+    }
+
+    if (isEditing) {
+        PendingBankImportEditDialog(
+            pendingImport = pendingImport,
+            categories = categories,
+            onDismiss = { isEditing = false },
+            onSave = { updated ->
+                onUpdate(updated)
+                isEditing = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun PendingImportLine(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(0.42f),
+            color = MaterialTheme.colorScheme.onPrimaryContainer
+        )
+        Text(
+            text = value,
+            modifier = Modifier.weight(0.58f),
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun PendingBankImportEditDialog(
+    pendingImport: PendingBankImport,
+    categories: List<BudgetCategory>,
+    onDismiss: () -> Unit,
+    onSave: (PendingBankImport) -> Unit
+) {
+    var amount by remember(pendingImport.id) {
+        mutableStateOf(pendingImport.amount?.let { formatInputMoney(it) }.orEmpty())
+    }
+    var categoryId by remember(pendingImport.id) { mutableStateOf(pendingImport.suggestedCategoryId) }
+    var necessity by remember(pendingImport.id) { mutableStateOf(pendingImport.suggestedNecessity) }
+    var description by remember(pendingImport.id) { mutableStateOf(pendingImport.description) }
+    var dateInput by remember(pendingImport.id) {
+        mutableStateOf(FinanceDates.dateInputFromMillis(pendingImport.occurredAtMillis))
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit pending import") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = amount,
+                    onValueChange = { amount = it },
+                    label = { Text("Amount") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+                if (pendingImport.type == ParsedBankMessageType.EXPENSE) {
+                    CategoryPicker(
+                        categories = categories,
+                        selectedCategoryId = categoryId,
+                        onCategorySelected = { categoryId = it }
+                    )
+                }
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = dateInput,
+                    onValueChange = { dateInput = it },
+                    label = { Text("Date") },
+                    supportingText = { Text("YYYY-MM-DD") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("Description") },
+                    minLines = 2
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NecessityLevel.entries.forEach { level ->
+                        FilterChip(
+                            selected = necessity == level,
+                            onClick = { necessity = level },
+                            label = { Text(level.label) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val occurredAt = FinanceDates.parseDateInput(dateInput) ?: pendingImport.occurredAtMillis
+                    val selectedCategory = categories.firstOrNull { it.id == categoryId }
+                    onSave(
+                        pendingImport.copy(
+                            amount = amount.trim().replace(",", "").toDoubleOrNull(),
+                            occurredAtMillis = occurredAt,
+                            suggestedCategoryId = categoryId,
+                            suggestedCategoryName = selectedCategory?.name ?: pendingImport.suggestedCategoryName,
+                            suggestedNecessity = necessity,
+                            description = description
+                        )
+                    )
+                }
+            ) {
+                Text("Apply")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable

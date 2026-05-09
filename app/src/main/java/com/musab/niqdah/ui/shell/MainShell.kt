@@ -16,6 +16,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -53,9 +54,16 @@ fun MainShell(
     financeViewModel: FinanceViewModel,
     aiChatUiState: AiChatUiState,
     aiChatViewModel: AiChatViewModel,
+    openTransactionsRequest: Int,
     onLogout: () -> Unit
 ) {
     var selectedDestination by rememberSaveable { mutableStateOf(ShellDestination.Dashboard) }
+
+    LaunchedEffect(openTransactionsRequest) {
+        if (openTransactionsRequest > 0) {
+            selectedDestination = ShellDestination.Transactions
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -107,6 +115,9 @@ fun MainShell(
                 onDeleteIncomeTransaction = financeViewModel::deleteIncomeTransaction,
                 onPreviewBankMessage = financeViewModel::previewBankMessage,
                 onSaveImportedBankMessage = financeViewModel::saveImportedBankMessage,
+                onSavePendingBankImport = financeViewModel::savePendingBankImport,
+                onUpdatePendingBankImport = financeViewModel::updatePendingBankImport,
+                onDismissPendingBankImport = financeViewModel::dismissPendingBankImport,
                 onMonthSelected = financeViewModel::setTransactionMonth,
                 onCategoryFilterSelected = financeViewModel::setTransactionCategoryFilter,
                 onClearError = financeViewModel::clearError

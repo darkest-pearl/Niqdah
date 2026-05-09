@@ -1,5 +1,10 @@
 package com.musab.niqdah.ui.finance
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -28,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,10 +47,11 @@ fun SettingsScreen(
     padding: PaddingValues,
     onUpdateProfileAndDebt: (String, String, String, String, String, String) -> Unit,
     onUpdateCategoryBudgets: (Map<String, String>) -> Unit,
-    onUpdateBankMessageSettings: (String, Boolean, String, Boolean, String, String, String) -> Unit,
+    onUpdateBankMessageSettings: (Boolean, String, Boolean, String, Boolean, String, String, String) -> Unit,
     onLogout: () -> Unit,
     onClearError: () -> Unit
 ) {
+    val context = LocalContext.current
     val profile = uiState.data.profile
     val debt = uiState.data.debt
     var salary by remember { mutableStateOf("") }
@@ -55,12 +62,22 @@ fun SettingsScreen(
     var remainingDebt by remember { mutableStateOf("") }
     var categoryBudgets by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var dailySenderName by remember { mutableStateOf("") }
+    var isAutomaticSmsImportEnabled by remember { mutableStateOf(false) }
+    var isSmsPermissionGranted by remember {
+        mutableStateOf(context.hasReceiveSmsPermission())
+    }
     var isDailyParserEnabled by remember { mutableStateOf(true) }
     var savingsSenderName by remember { mutableStateOf("") }
     var isSavingsParserEnabled by remember { mutableStateOf(true) }
     var debitKeywords by remember { mutableStateOf("") }
     var creditKeywords by remember { mutableStateOf("") }
     var savingsTransferKeywords by remember { mutableStateOf("") }
+    val smsPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        isSmsPermissionGranted = granted
+        isAutomaticSmsImportEnabled = granted
+    }
 
     LaunchedEffect(profile, debt) {
         salary = formatInputMoney(profile.salary)
@@ -77,6 +94,7 @@ fun SettingsScreen(
 
     LaunchedEffect(uiState.data.bankMessageSettings) {
         val settings = uiState.data.bankMessageSettings
+        isAutomaticSmsImportEnabled = settings.isAutomaticSmsImportEnabled
         dailySenderName = settings.dailyUseSource.senderName
         isDailyParserEnabled = settings.dailyUseSource.isEnabled
         savingsSenderName = settings.savingsSource.senderName
@@ -136,6 +154,17 @@ fun SettingsScreen(
         }
         item {
             BankMessageSourcesCard(
+                isAutomaticSmsImportEnabled = isAutomaticSmsImportEnabled,
+                onAutomaticSmsImportEnabledChange = { enabled ->
+                    if (enabled && !isSmsPermissionGranted) {
+                        smsPermissionLauncher.launch(Manifest.permission.RECEIVE_SMS)
+                    } else {
+                        isAutomaticSmsImportEnabled = enabled
+                    }
+                },
+                isSmsPermissionGranted = isSmsPermissionGranted,
+                lastIgnoredSender = uiState.data.bankMessageSettings.lastIgnoredSender,
+                lastParsedBankMessageAtMillis = uiState.data.bankMessageSettings.lastParsedBankMessageAtMillis,
                 dailySenderName = dailySenderName,
                 onDailySenderNameChange = { dailySenderName = it },
                 isDailyParserEnabled = isDailyParserEnabled,
@@ -153,6 +182,7 @@ fun SettingsScreen(
                 isSaving = uiState.isSaving,
                 onSave = {
                     onUpdateBankMessageSettings(
+                        isAutomaticSmsImportEnabled && isSmsPermissionGranted,
                         dailySenderName,
                         isDailyParserEnabled,
                         savingsSenderName,
@@ -280,6 +310,11 @@ private fun ProfileSettingsCard(
 
 @Composable
 private fun BankMessageSourcesCard(
+    isAutomaticSmsImportEnabled: Boolean,
+    onAutomaticSmsImportEnabledChange: (Boolean) -> Unit,
+    isSmsPermissionGranted: Boolean,
+    lastIgnoredSender: String,
+    lastParsedBankMessageAtMillis: Long,
     dailySenderName: String,
     onDailySenderNameChange: (String) -> Unit,
     isDailyParserEnabled: Boolean,
@@ -308,6 +343,39 @@ private fun BankMessageSourcesCard(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(text = "Bank Message Sources", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "Niqdah can read new bank SMS messages from your selected senders to prepare expense and savings drafts.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            SourceToggleRow(
+                title = "Enable automatic SMS import",
+                isEnabled = isAutomaticSmsImportEnabled,
+                onEnabledChange = onAutomaticSmsImportEnabledChange
+            )
+            SourceToggleRow(
+                title = "Require review before saving",
+                isEnabled = true,
+                isLocked = true,
+                onEnabledChange = {}
+            )
+            Text(
+                text = "SMS permission: ${if (isSmsPermissionGranted) "granted" else "not granted"}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Last ignored sender: ${lastIgnoredSender.ifBlank { "None" }}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Last parsed bank message: ${
+                    lastParsedBankMessageAtMillis.takeIf { it > 0L }?.let { formatTransactionDate(it) } ?: "None"
+                }",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
             SourceToggleRow(
                 title = "Daily-use parser",
                 isEnabled = isDailyParserEnabled,
@@ -369,6 +437,7 @@ private fun BankMessageSourcesCard(
 private fun SourceToggleRow(
     title: String,
     isEnabled: Boolean,
+    isLocked: Boolean = false,
     onEnabledChange: (Boolean) -> Unit
 ) {
     Row(
@@ -381,9 +450,16 @@ private fun SourceToggleRow(
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyLarge
         )
-        Switch(checked = isEnabled, onCheckedChange = onEnabledChange)
+        Switch(
+            checked = isEnabled,
+            enabled = !isLocked,
+            onCheckedChange = onEnabledChange
+        )
     }
 }
+
+private fun android.content.Context.hasReceiveSmsPermission(): Boolean =
+    ContextCompat.checkSelfPermission(this, Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED
 
 @Composable
 private fun CategoryBudgetField(

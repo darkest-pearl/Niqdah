@@ -30,6 +30,7 @@ class FinanceCalculatorTest {
                 )
             ),
             incomeTransactions = emptyList(),
+            pendingBankImports = emptyList(),
             goals = FinanceDefaults.savingsGoals(now = 0L),
             debt = FinanceDefaults.debtTracker(now = 0L),
             bankMessageSettings = FinanceDefaults.bankMessageParserSettings()

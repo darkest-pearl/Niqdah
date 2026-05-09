@@ -34,7 +34,7 @@ import com.musab.niqdah.ui.finance.FinanceViewModel
 import com.musab.niqdah.ui.shell.MainShell
 
 @Composable
-fun NiqdahApp() {
+fun NiqdahApp(openTransactionsRequest: Int = 0) {
     val context = LocalContext.current.applicationContext
     val authRepository = remember(context) { FirebaseAuthRepository(context) }
     val authViewModel: AuthViewModel = viewModel(
@@ -73,6 +73,7 @@ fun NiqdahApp() {
                 financeViewModel = financeViewModel,
                 aiChatUiState = aiChatUiState,
                 aiChatViewModel = aiChatViewModel,
+                openTransactionsRequest = openTransactionsRequest,
                 onLogout = authViewModel::signOut
             )
         }

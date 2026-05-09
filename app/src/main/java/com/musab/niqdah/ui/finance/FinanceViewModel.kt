@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.musab.niqdah.domain.ai.AiFinanceDraftAction
+import com.musab.niqdah.domain.finance.BankMessageImportHistory
+import com.musab.niqdah.domain.finance.BankMessageImportStatus
 import com.musab.niqdah.domain.finance.BankMessageParser
 import com.musab.niqdah.domain.finance.BankMessageParserSettings
 import com.musab.niqdah.domain.finance.BankMessageSourceSettings
@@ -20,6 +22,7 @@ import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.ParsedBankMessage
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
+import com.musab.niqdah.domain.finance.PendingBankImport
 import com.musab.niqdah.domain.finance.SavingsGoal
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -250,49 +253,81 @@ class FinanceViewModel(
         val parsedOccurredAt = occurredAt ?: return
         val now = System.currentTimeMillis()
         runSave(onSuccess = onSuccess, onFailure = onFailure) {
-            when (type) {
-                ParsedBankMessageType.EXPENSE -> {
-                    financeRepository.upsertTransaction(
-                        ExpenseTransaction(
-                            id = UUID.randomUUID().toString(),
-                            categoryId = categoryId.orEmpty(),
-                            amount = parsedAmount,
-                            currency = currency,
-                            note = description.trim(),
-                            necessity = necessity,
-                            occurredAtMillis = parsedOccurredAt,
-                            yearMonth = FinanceDates.yearMonthFromMillis(parsedOccurredAt),
-                            createdAtMillis = now,
-                            updatedAtMillis = now
-                        )
-                    )
-                }
-                ParsedBankMessageType.INCOME -> {
-                    financeRepository.upsertIncomeTransaction(
-                        IncomeTransaction(
-                            id = UUID.randomUUID().toString(),
-                            amount = parsedAmount,
-                            currency = currency,
-                            source = senderName.trim(),
-                            note = description.trim(),
-                            occurredAtMillis = parsedOccurredAt,
-                            yearMonth = FinanceDates.yearMonthFromMillis(parsedOccurredAt),
-                            createdAtMillis = now,
-                            updatedAtMillis = now
-                        )
-                    )
-                }
-                ParsedBankMessageType.SAVINGS_TRANSFER -> {
-                    saveSavingsContribution(
-                        amount = parsedAmount,
-                        currency = currency,
-                        description = description,
-                        occurredAtMillis = parsedOccurredAt,
-                        now = now
-                    )
-                }
-                ParsedBankMessageType.UNKNOWN -> Unit
-            }
+            writeImportedFinanceAction(
+                type = type,
+                amount = parsedAmount,
+                currency = currency,
+                categoryId = categoryId,
+                description = description,
+                necessity = necessity,
+                occurredAtMillis = parsedOccurredAt,
+                senderName = senderName,
+                now = now
+            )
+        }
+    }
+
+    fun savePendingBankImport(pendingImport: PendingBankImport) {
+        val amount = pendingImport.amount
+        val validationError = when {
+            pendingImport.type == ParsedBankMessageType.UNKNOWN -> "Choose a message type before saving."
+            amount == null || amount <= 0.0 -> "Enter a valid imported amount."
+            pendingImport.type == ParsedBankMessageType.EXPENSE &&
+                pendingImport.suggestedCategoryId.isNullOrBlank() -> "Choose a category."
+            else -> null
+        }
+
+        if (validationError != null) {
+            _uiState.update { it.copy(errorMessage = validationError) }
+            return
+        }
+
+        val parsedAmount = amount ?: return
+        val now = System.currentTimeMillis()
+        runSave {
+            writeImportedFinanceAction(
+                type = pendingImport.type,
+                amount = parsedAmount,
+                currency = pendingImport.currency,
+                categoryId = pendingImport.suggestedCategoryId,
+                description = pendingImport.description,
+                necessity = pendingImport.suggestedNecessity,
+                occurredAtMillis = pendingImport.occurredAtMillis,
+                senderName = pendingImport.senderName,
+                now = now
+            )
+            financeRepository.deletePendingBankImport(pendingImport.id)
+            financeRepository.upsertBankMessageImportHistory(
+                BankMessageImportHistory(
+                    messageHash = pendingImport.messageHash,
+                    status = BankMessageImportStatus.SAVED,
+                    senderName = pendingImport.senderName,
+                    updatedAtMillis = now
+                )
+            )
+        }
+    }
+
+    fun updatePendingBankImport(pendingImport: PendingBankImport) {
+        runSave {
+            financeRepository.upsertPendingBankImport(
+                pendingImport.copy(updatedAtMillis = System.currentTimeMillis())
+            )
+        }
+    }
+
+    fun dismissPendingBankImport(pendingImport: PendingBankImport) {
+        val now = System.currentTimeMillis()
+        runSave {
+            financeRepository.deletePendingBankImport(pendingImport.id)
+            financeRepository.upsertBankMessageImportHistory(
+                BankMessageImportHistory(
+                    messageHash = pendingImport.messageHash,
+                    status = BankMessageImportStatus.DISMISSED,
+                    senderName = pendingImport.senderName,
+                    updatedAtMillis = now
+                )
+            )
         }
     }
 
@@ -404,6 +439,7 @@ class FinanceViewModel(
     }
 
     fun updateBankMessageSettings(
+        isAutomaticSmsImportEnabled: Boolean,
         dailySenderName: String,
         isDailyEnabled: Boolean,
         savingsSenderName: String,
@@ -412,6 +448,7 @@ class FinanceViewModel(
         creditKeywordsInput: String,
         savingsTransferKeywordsInput: String
     ) {
+        val currentSettings = _uiState.value.data.bankMessageSettings
         val settings = BankMessageParserSettings(
             dailyUseSource = BankMessageSourceSettings(
                 senderName = dailySenderName.trim(),
@@ -421,6 +458,10 @@ class FinanceViewModel(
                 senderName = savingsSenderName.trim(),
                 isEnabled = isSavingsEnabled
             ),
+            isAutomaticSmsImportEnabled = isAutomaticSmsImportEnabled,
+            requireReviewBeforeSaving = true,
+            lastIgnoredSender = currentSettings.lastIgnoredSender,
+            lastParsedBankMessageAtMillis = currentSettings.lastParsedBankMessageAtMillis,
             debitKeywords = keywordListOrDefault(
                 debitKeywordsInput,
                 FinanceDefaults.DEFAULT_DEBIT_KEYWORDS
@@ -473,6 +514,62 @@ class FinanceViewModel(
                 updatedAtMillis = now
             )
         )
+    }
+
+    private suspend fun writeImportedFinanceAction(
+        type: ParsedBankMessageType,
+        amount: Double,
+        currency: String,
+        categoryId: String?,
+        description: String,
+        necessity: NecessityLevel,
+        occurredAtMillis: Long,
+        senderName: String,
+        now: Long
+    ) {
+        when (type) {
+            ParsedBankMessageType.EXPENSE -> {
+                financeRepository.upsertTransaction(
+                    ExpenseTransaction(
+                        id = UUID.randomUUID().toString(),
+                        categoryId = categoryId.orEmpty(),
+                        amount = amount,
+                        currency = currency,
+                        note = description.trim(),
+                        necessity = necessity,
+                        occurredAtMillis = occurredAtMillis,
+                        yearMonth = FinanceDates.yearMonthFromMillis(occurredAtMillis),
+                        createdAtMillis = now,
+                        updatedAtMillis = now
+                    )
+                )
+            }
+            ParsedBankMessageType.INCOME -> {
+                financeRepository.upsertIncomeTransaction(
+                    IncomeTransaction(
+                        id = UUID.randomUUID().toString(),
+                        amount = amount,
+                        currency = currency,
+                        source = senderName.trim(),
+                        note = description.trim(),
+                        occurredAtMillis = occurredAtMillis,
+                        yearMonth = FinanceDates.yearMonthFromMillis(occurredAtMillis),
+                        createdAtMillis = now,
+                        updatedAtMillis = now
+                    )
+                )
+            }
+            ParsedBankMessageType.SAVINGS_TRANSFER -> {
+                saveSavingsContribution(
+                    amount = amount,
+                    currency = currency,
+                    description = description,
+                    occurredAtMillis = occurredAtMillis,
+                    now = now
+                )
+            }
+            ParsedBankMessageType.UNKNOWN -> Unit
+        }
     }
 
     private fun runSave(

@@ -91,6 +91,7 @@ data class FinanceData(
     val categories: List<BudgetCategory>,
     val transactions: List<ExpenseTransaction>,
     val incomeTransactions: List<IncomeTransaction>,
+    val pendingBankImports: List<PendingBankImport>,
     val goals: List<SavingsGoal>,
     val debt: DebtTracker,
     val bankMessageSettings: BankMessageParserSettings
@@ -102,6 +103,7 @@ data class FinanceData(
                 categories = emptyList(),
                 transactions = emptyList(),
                 incomeTransactions = emptyList(),
+                pendingBankImports = emptyList(),
                 goals = emptyList(),
                 debt = FinanceDefaults.debtTracker(),
                 bankMessageSettings = FinanceDefaults.bankMessageParserSettings()
@@ -112,6 +114,10 @@ data class FinanceData(
 data class BankMessageParserSettings(
     val dailyUseSource: BankMessageSourceSettings = BankMessageSourceSettings(),
     val savingsSource: BankMessageSourceSettings = BankMessageSourceSettings(),
+    val isAutomaticSmsImportEnabled: Boolean = false,
+    val requireReviewBeforeSaving: Boolean = true,
+    val lastIgnoredSender: String = "",
+    val lastParsedBankMessageAtMillis: Long = 0L,
     val debitKeywords: List<String> = FinanceDefaults.DEFAULT_DEBIT_KEYWORDS,
     val creditKeywords: List<String> = FinanceDefaults.DEFAULT_CREDIT_KEYWORDS,
     val savingsTransferKeywords: List<String> = FinanceDefaults.DEFAULT_SAVINGS_TRANSFER_KEYWORDS
@@ -156,6 +162,40 @@ data class ParsedBankMessage(
     val suggestedNecessity: NecessityLevel = NecessityLevel.OPTIONAL,
     val confidence: ParsedBankMessageConfidence = ParsedBankMessageConfidence.LOW
 )
+
+data class PendingBankImport(
+    val id: String,
+    val messageHash: String,
+    val senderName: String,
+    val rawMessage: String,
+    val sourceType: BankMessageSourceType,
+    val type: ParsedBankMessageType,
+    val amount: Double?,
+    val currency: String,
+    val availableBalance: Double?,
+    val description: String,
+    val occurredAtMillis: Long,
+    val suggestedCategoryId: String?,
+    val suggestedCategoryName: String,
+    val suggestedNecessity: NecessityLevel,
+    val confidence: ParsedBankMessageConfidence,
+    val receivedAtMillis: Long,
+    val createdAtMillis: Long = 0L,
+    val updatedAtMillis: Long = 0L
+)
+
+data class BankMessageImportHistory(
+    val messageHash: String,
+    val status: BankMessageImportStatus,
+    val senderName: String,
+    val updatedAtMillis: Long
+)
+
+enum class BankMessageImportStatus {
+    PENDING,
+    SAVED,
+    DISMISSED
+}
 
 data class CategorySpend(
     val category: BudgetCategory,
