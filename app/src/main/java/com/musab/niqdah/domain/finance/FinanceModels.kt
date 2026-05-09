@@ -137,7 +137,7 @@ enum class BankMessageSourceType(val label: String) {
 enum class ParsedBankMessageType(val label: String) {
     EXPENSE("Expense"),
     INCOME("Income"),
-    SAVINGS_TRANSFER("Savings Transfer"),
+    SAVINGS_TRANSFER("Savings transfer"),
     UNKNOWN("Unknown")
 }
 

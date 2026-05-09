@@ -60,23 +60,39 @@ class BankMessageParser {
         val sourceType = resolveSourceType(senderName, compactMessage, settings)
         val canUseDaily = settings.dailyUseSource.isEnabled &&
             (sourceType == BankMessageSourceType.DAILY_USE || sourceType == BankMessageSourceType.UNKNOWN)
-        val canUseSavings = settings.savingsSource.isEnabled &&
-            (sourceType == BankMessageSourceType.SAVINGS || sourceType == BankMessageSourceType.UNKNOWN)
-        val hasSavingsTransfer = compactMessage.containsAny(settings.savingsTransferKeywords)
-        val hasDebit = compactMessage.containsAny(settings.debitKeywords)
-        val hasCredit = compactMessage.containsAny(settings.creditKeywords)
+        val savingsKeywords = mergedKeywords(
+            settings.savingsTransferKeywords,
+            FinanceDefaults.DEFAULT_SAVINGS_TRANSFER_KEYWORDS,
+            STRONG_SAVINGS_TRANSFER_KEYWORDS
+        )
+        val debitKeywords = mergedKeywords(
+            settings.debitKeywords,
+            FinanceDefaults.DEFAULT_DEBIT_KEYWORDS,
+            STRONG_DEBIT_KEYWORDS
+        )
+        val creditKeywords = mergedKeywords(
+            settings.creditKeywords,
+            FinanceDefaults.DEFAULT_CREDIT_KEYWORDS,
+            STRONG_CREDIT_KEYWORDS
+        )
+        val hasSavingsTransfer = compactMessage.containsAny(savingsKeywords)
+        val hasDebit = compactMessage.containsAny(debitKeywords)
+        val hasCredit = compactMessage.containsAny(creditKeywords)
         val parsedType = when {
-            hasSavingsTransfer && canUseSavings -> ParsedBankMessageType.SAVINGS_TRANSFER
+            hasSavingsTransfer -> ParsedBankMessageType.SAVINGS_TRANSFER
             hasDebit && canUseDaily -> ParsedBankMessageType.EXPENSE
             hasCredit && canUseDaily -> ParsedBankMessageType.INCOME
             else -> ParsedBankMessageType.UNKNOWN
         }
 
         val moneyMentions = extractMoneyMentions(rawMessage)
-        val amount = chooseTransactionAmount(moneyMentions, compactMessage)?.amount
-        val currency = chooseTransactionAmount(moneyMentions, compactMessage)?.currency
+        val transactionAmount = chooseTransactionAmount(moneyMentions, compactMessage)
+        val amount = transactionAmount?.amount
+        val currency = transactionAmount?.currency
             ?: moneyMentions.firstOrNull()?.currency
             ?: FinanceDefaults.DEFAULT_CURRENCY
+        val hasExplicitCurrency = transactionAmount?.hasExplicitCurrency == true ||
+            moneyMentions.any { !it.isBalanceLike && it.hasExplicitCurrency }
         val availableBalance = moneyMentions.firstOrNull { it.isBalanceLike }?.amount
         val occurredAt = parseDateMillis(rawMessage, nowMillis) ?: nowMillis
         val categorySuggestion = when (parsedType) {
@@ -114,9 +130,9 @@ class BankMessageParser {
             suggestedNecessity = categorySuggestion.necessity,
             confidence = confidenceFor(
                 parsedType = parsedType,
-                sourceType = sourceType,
                 amount = amount,
-                categorySuggestion = categorySuggestion
+                hasExplicitCurrency = hasExplicitCurrency,
+                hasSavingsTransfer = hasSavingsTransfer
             )
         )
     }
@@ -179,6 +195,7 @@ class BankMessageParser {
                         rawMessage = rawMessage,
                         amount = amount,
                         currency = normalizeCurrency(currencyText),
+                        hasExplicitCurrency = true,
                         start = match.range.first,
                         end = match.range.last
                     )
@@ -197,6 +214,7 @@ class BankMessageParser {
                 rawMessage = rawMessage,
                 amount = amount,
                 currency = FinanceDefaults.DEFAULT_CURRENCY,
+                hasExplicitCurrency = false,
                 start = range.first,
                 end = range.last
             )
@@ -209,6 +227,7 @@ class BankMessageParser {
         rawMessage: String,
         amount: Double,
         currency: String,
+        hasExplicitCurrency: Boolean,
         start: Int,
         end: Int
     ): MoneyMention {
@@ -220,6 +239,7 @@ class BankMessageParser {
         return MoneyMention(
             amount = amount,
             currency = currency,
+            hasExplicitCurrency = hasExplicitCurrency,
             start = start,
             end = end,
             context = context,
@@ -386,15 +406,18 @@ class BankMessageParser {
 
     private fun confidenceFor(
         parsedType: ParsedBankMessageType,
-        sourceType: BankMessageSourceType,
         amount: Double?,
-        categorySuggestion: CategorySuggestion
+        hasExplicitCurrency: Boolean,
+        hasSavingsTransfer: Boolean
     ): ParsedBankMessageConfidence = when {
-        parsedType != ParsedBankMessageType.UNKNOWN &&
-            amount != null &&
-            sourceType != BankMessageSourceType.UNKNOWN &&
-            categorySuggestion.id != FinanceDefaults.UNCATEGORIZED_CATEGORY_ID -> ParsedBankMessageConfidence.HIGH
-        parsedType != ParsedBankMessageType.UNKNOWN && amount != null -> ParsedBankMessageConfidence.MEDIUM
+        parsedType == ParsedBankMessageType.SAVINGS_TRANSFER && hasSavingsTransfer && amount != null ->
+            ParsedBankMessageConfidence.HIGH
+        parsedType != ParsedBankMessageType.UNKNOWN && amount != null && hasExplicitCurrency ->
+            ParsedBankMessageConfidence.HIGH
+        amount != null && hasExplicitCurrency ->
+            ParsedBankMessageConfidence.MEDIUM
+        parsedType != ParsedBankMessageType.UNKNOWN && amount != null ->
+            ParsedBankMessageConfidence.MEDIUM
         else -> ParsedBankMessageConfidence.LOW
     }
 
@@ -415,6 +438,13 @@ class BankMessageParser {
         return keywords.any { keyword -> keyword.trim().isNotBlank() && text.contains(keyword.trim().lowercase(Locale.US)) }
     }
 
+    private fun mergedKeywords(vararg keywordGroups: List<String>): List<String> =
+        keywordGroups
+            .flatMap { it }
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinctBy { it.lowercase(Locale.US) }
+
     private fun String.containsMoneyLike(): Boolean =
         contains(Regex("""(?i)\b(AED|DHS|DIRHAMS?|USD|SAR|EUR|GBP)\b|[0-9][0-9,]*(?:\.\d{1,2})?"""))
 
@@ -427,6 +457,7 @@ class BankMessageParser {
     private data class MoneyMention(
         val amount: Double,
         val currency: String,
+        val hasExplicitCurrency: Boolean,
         val start: Int,
         val end: Int,
         val context: String,
@@ -444,4 +475,41 @@ class BankMessageParser {
         val name: String,
         val necessity: NecessityLevel
     )
+
+    private companion object {
+        val STRONG_SAVINGS_TRANSFER_KEYWORDS = listOf(
+            "transferred to savings",
+            "transfer to savings",
+            "savings account",
+            "saving account",
+            "moved to savings",
+            "marriage savings",
+            "goal account",
+            "reserve account",
+            "saved to",
+            "deposited to savings"
+        )
+
+        val STRONG_DEBIT_KEYWORDS = listOf(
+            "debited",
+            "spent",
+            "purchase",
+            "paid",
+            "card transaction",
+            "pos",
+            "atm withdrawal",
+            "deducted",
+            "charged"
+        )
+
+        val STRONG_CREDIT_KEYWORDS = listOf(
+            "credited",
+            "salary",
+            "received",
+            "deposited",
+            "refund",
+            "cash deposit",
+            "transfer received"
+        )
+    }
 }

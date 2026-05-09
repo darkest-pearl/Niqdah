@@ -20,6 +20,9 @@ object FinanceDefaults {
         "purchase",
         "pos",
         "paid",
+        "card transaction",
+        "atm withdrawal",
+        "deducted",
         "withdrawn",
         "charged"
     )
@@ -29,17 +32,24 @@ object FinanceDefaults {
         "credit",
         "received",
         "salary",
+        "deposited",
         "refund",
+        "cash deposit",
+        "transfer received",
         "deposit"
     )
 
     val DEFAULT_SAVINGS_TRANSFER_KEYWORDS = listOf(
+        "transferred to savings",
         "transfer to savings",
         "saving account",
         "savings account",
+        "moved to savings",
         "goal account",
+        "reserve account",
         "marriage savings",
-        "saved to"
+        "saved to",
+        "deposited to savings"
     )
 
     fun userProfile(uid: String, now: Long = System.currentTimeMillis()): UserProfile =

@@ -29,13 +29,14 @@ class BankMessageParserTest {
         assertEquals(FinanceDefaults.FOOD_TRANSPORT_CATEGORY_ID, parsed.suggestedCategoryId)
         assertEquals(NecessityLevel.NECESSARY, parsed.suggestedNecessity)
         assertEquals("2026-05-08", FinanceDates.dateInputFromMillis(parsed.occurredAtMillis))
+        assertEquals(ParsedBankMessageConfidence.HIGH, parsed.confidence)
     }
 
     @Test
     fun savingsTransferUsesSavingsCategory() {
         val parsed = parser.parse(
-            rawMessage = "AED 1,700 transferred to savings account on 2026-05-08 09:30",
-            manualSenderName = "SavingsBank",
+            rawMessage = "AED 1700 transferred to savings account on 2026-05-08",
+            manualSenderName = "BANKTEST",
             settings = FinanceDefaults.bankMessageParserSettings().copy(
                 savingsSource = BankMessageSourceSettings(senderName = "SavingsBank", isEnabled = true)
             ),
@@ -44,9 +45,64 @@ class BankMessageParserTest {
         )
 
         assertEquals(ParsedBankMessageType.SAVINGS_TRANSFER, parsed.type)
+        assertEquals("AED", parsed.currency)
         assertEquals(FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID, parsed.suggestedCategoryId)
+        assertEquals("Marriage savings", parsed.suggestedCategoryName)
+        assertEquals(NecessityLevel.NECESSARY, parsed.suggestedNecessity)
         assertEquals(1_700.0, parsed.amount ?: 0.0, 0.001)
+        assertEquals("2026-05-08", FinanceDates.dateInputFromMillis(parsed.occurredAtMillis))
+        assertEquals(ParsedBankMessageConfidence.HIGH, parsed.confidence)
         assertEquals("Transfer to savings", parsed.description)
+    }
+
+    @Test
+    fun exactSavingsTransferOverridesDailyUseSenderProfile() {
+        val settings = FinanceDefaults.bankMessageParserSettings().copy(
+            dailyUseSource = BankMessageSourceSettings(senderName = "BANKTEST", isEnabled = true),
+            savingsSource = BankMessageSourceSettings(senderName = "SavingsBank", isEnabled = true)
+        )
+
+        val parsed = parser.parse(
+            rawMessage = "AED 1700 transferred to savings account on 2026-05-08",
+            manualSenderName = "BANKTEST",
+            settings = settings,
+            categories = categories,
+            nowMillis = 1_800_000_000_000L
+        )
+
+        assertEquals(ParsedBankMessageType.SAVINGS_TRANSFER, parsed.type)
+        assertEquals(1_700.0, parsed.amount ?: 0.0, 0.001)
+        assertEquals("AED", parsed.currency)
+        assertEquals(FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID, parsed.suggestedCategoryId)
+        assertEquals("Marriage savings", parsed.suggestedCategoryName)
+        assertEquals(NecessityLevel.NECESSARY, parsed.suggestedNecessity)
+        assertEquals("2026-05-08", FinanceDates.dateInputFromMillis(parsed.occurredAtMillis))
+        assertEquals(ParsedBankMessageConfidence.HIGH, parsed.confidence)
+    }
+
+    @Test
+    fun exactSavingsTransferPendingImportStoresSavingsTransferModel() {
+        val pendingImport = parser.parsePendingImport(
+            rawMessage = "AED 1700 transferred to savings account on 2026-05-08",
+            senderName = "BANKTEST",
+            settings = FinanceDefaults.bankMessageParserSettings().copy(
+                dailyUseSource = BankMessageSourceSettings(senderName = "BANKTEST", isEnabled = true),
+                savingsSource = BankMessageSourceSettings(senderName = "SavingsBank", isEnabled = true)
+            ),
+            categories = categories,
+            messageHash = "hash",
+            receivedAtMillis = 1_800_000_000_000L,
+            nowMillis = 1_800_000_000_000L
+        )
+
+        assertEquals(ParsedBankMessageType.SAVINGS_TRANSFER, pendingImport.type)
+        assertEquals(1_700.0, pendingImport.amount ?: 0.0, 0.001)
+        assertEquals("AED", pendingImport.currency)
+        assertEquals(FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID, pendingImport.suggestedCategoryId)
+        assertEquals("Marriage savings", pendingImport.suggestedCategoryName)
+        assertEquals(NecessityLevel.NECESSARY, pendingImport.suggestedNecessity)
+        assertEquals("2026-05-08", FinanceDates.dateInputFromMillis(pendingImport.occurredAtMillis))
+        assertEquals(ParsedBankMessageConfidence.HIGH, pendingImport.confidence)
     }
 
     @Test
@@ -62,6 +118,23 @@ class BankMessageParserTest {
         assertEquals(ParsedBankMessageType.INCOME, parsed.type)
         assertEquals(5_000.0, parsed.amount ?: 0.0, 0.001)
         assertEquals(5_300.0, parsed.availableBalance ?: 0.0, 0.001)
+    }
+
+    @Test
+    fun exactCreditSalaryMessageBecomesHighConfidenceIncome() {
+        val parsed = parser.parse(
+            rawMessage = "AED 5000 credited salary on 01/05/2026",
+            manualSenderName = "BANKTEST",
+            settings = FinanceDefaults.bankMessageParserSettings(),
+            categories = categories,
+            nowMillis = 1_800_000_000_000L
+        )
+
+        assertEquals(ParsedBankMessageType.INCOME, parsed.type)
+        assertEquals(5_000.0, parsed.amount ?: 0.0, 0.001)
+        assertEquals("AED", parsed.currency)
+        assertEquals(ParsedBankMessageConfidence.HIGH, parsed.confidence)
+        assertEquals("2026-05-01", FinanceDates.dateInputFromMillis(parsed.occurredAtMillis))
     }
 
     @Test
@@ -95,5 +168,6 @@ class BankMessageParserTest {
         assertEquals(ParsedBankMessageType.EXPENSE, parsed.type)
         assertEquals(42.50, parsed.amount ?: 0.0, 0.001)
         assertEquals(FinanceDefaults.FOOD_TRANSPORT_CATEGORY_ID, parsed.suggestedCategoryId)
+        assertEquals(ParsedBankMessageConfidence.HIGH, parsed.confidence)
     }
 }
