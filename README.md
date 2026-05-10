@@ -2,7 +2,7 @@
 
 Niqdah is a personal Android finance app for disciplined budgeting and wedding preparation, built with Kotlin, Jetpack Compose, Material 3, Firebase Auth, Firestore, and Firebase Cloud Functions.
 
-Phase 5 includes email/password auth, a manual finance engine, dashboard calculations, transaction tracking, savings envelopes, debt tracking, editable settings, persistent Firestore data under each authenticated user, a secure AI Chat backend, manual bank message import, review-first incoming SMS import for selected bank senders, account balance tracking, rich pending-import notification actions, and personal financial discipline reminders.
+Phase 6 includes email/password auth, a manual finance engine, dashboard calculations, transaction tracking, savings envelopes, debt tracking, editable settings, persistent Firestore data under each authenticated user, a secure AI Chat backend, manual bank message import, review-first incoming SMS import for selected bank senders, account balance tracking, pending-import notification actions, personal financial discipline reminders, Firebase security rules, release notes, and QA checklists.
 
 ## Tech Stack
 
@@ -28,6 +28,12 @@ Do not commit `google-services.json`. It is ignored by Git.
 7. Sync the project in Android Studio.
 
 Without `app/google-services.json`, the project can still open and sync, but the app will show a Firebase setup message instead of the login flow.
+
+Deploy Firestore security rules after selecting the Firebase project:
+
+```powershell
+firebase deploy --only firestore:rules
+```
 
 ## Cloud Functions And AI Setup
 
@@ -84,7 +90,7 @@ AI Chat screen
   -> OpenAI Responses API
 ```
 
-Payload sent to the backend includes the user message, in-session chat history, and a trimmed finance context: profile income, savings target, debt tracker, current month snapshot, category budgets, savings goals, discipline status, necessary items due, January countdown, and recent transactions.
+Payload sent to the backend includes the user message, in-session chat history, and a trimmed finance context: profile income, savings target, debt tracker, current month snapshot, category budgets, savings goals, discipline status, necessary items due, January countdown, and recent transactions. Bank-like SMS text pasted into AI Chat is withheld locally; AI receives only a parsed financial summary for that draft.
 
 ## Firestore Data Shape
 
@@ -110,11 +116,11 @@ The first sign-in seeds the default salary, extra income, rent, food/transport b
 
 ## Phase 4A Manual Bank Message Import
 
-Transactions now includes an **Import Message** section where the user manually pastes a bank SMS or bank-app message. Niqdah parses the pasted text locally in the app and shows an editable preview before saving.
+Transactions now includes an **Import bank message** section where the user manually pastes a bank SMS or bank-app message. Niqdah parses the pasted text locally in the app and shows an editable preview before saving.
 
 The parser can detect sender, source profile, amount, currency, debit/spending, credit/income, savings transfer, available balance, description or merchant text, and date when present. If a date is missing, the preview defaults to the current date.
 
-Settings includes **Bank Message Sources**:
+Settings includes **Bank message sources**:
 
 - Daily-use sender name and enable/disable toggle
 - Savings sender name and enable/disable toggle
@@ -139,7 +145,7 @@ Privacy and control rules:
 - Pending imports can be saved, edited, or dismissed from Transactions.
 - Duplicate protection uses a hash of sender, message body, and a rounded received timestamp.
 
-Tapping a bank-import notification opens the Transactions tab, where **Pending Bank Imports** shows sender, type, amount, currency, suggested category, necessity, date, confidence, and a hidden-by-default message body.
+Tapping a bank-import notification opens the Transactions tab, where **Pending bank imports** shows sender, type, amount, currency, suggested category, necessity, date, confidence, and parsed review notes. Automatic pending imports keep `rawMessage` empty in Firestore.
 
 ## Phase 4C Balance Tracking And Notification Actions
 
@@ -169,9 +175,20 @@ Phase 5 adds local, gentle financial discipline reminders and dashboard guidance
 - Dashboard discipline card with savings status, categories near limit, due necessary items, avoid spending this month, and safe-to-spend.
 - January target countdown with editable target date and fund amount.
 
-Reminder Settings controls live in Settings. WorkManager schedules Android-friendly local checks for monthly savings, missed savings, overspending, and necessary items. Notifications are posted only if `POST_NOTIFICATIONS` is already granted; Phase 5 does not add another notification permission prompt. Reminder wording is practical and non-shaming.
+Reminder settings controls live in Settings. WorkManager schedules Android-friendly local checks for monthly savings, missed savings, overspending, and necessary items. Notifications are posted only if `POST_NOTIFICATIONS` is already granted; Phase 5 does not add another notification permission prompt. Reminder wording is practical and non-shaming.
 
-Privacy posture remains the same: no `READ_SMS`, no SMS content sent to OpenAI, no OpenAI API key in the Android app, and no backend SMS access. AI Chat receives discipline summaries such as savings progress, overspent categories, due necessary items, safe-to-spend, and January countdown status. It cannot create reminders or write data; the Android UI must present any saveable action for review.
+Privacy posture remains the same: no `READ_SMS`, no SMS content sent to OpenAI, no OpenAI API key in the Android app, and no backend SMS access. AI Chat receives discipline summaries such as savings progress, overspent categories, due necessary items, safe-to-spend, and January countdown status. If bank-like SMS text is pasted into AI Chat, the Android app keeps the raw text local and sends only a parsed summary. AI cannot create reminders or write data; the Android UI must present any saveable action for review.
+
+## Phase 6 Polish, Security, And Release Prep
+
+Phase 6 adds a first-run setup checklist in Settings, a short in-app Privacy note, friendlier save feedback, central notification channel definitions, Firestore security rules, and personal APK preparation docs.
+
+Firestore rules are in `firestore.rules` and allow each signed-in user to read and write only `users/{uid}` and nested data under their own UID. All other reads and writes are denied by default.
+
+Release and QA references:
+
+- `docs/RELEASE.md`
+- `docs/QA_CHECKLIST.md`
 
 ## Open And Run In Android Studio
 
@@ -212,6 +229,8 @@ functions/
   src/index.ts         Callable Cloud Function using OpenAI Responses API
 docs/
   PHASES.md
+  QA_CHECKLIST.md
+  RELEASE.md
 ```
 
 ## Current Scope
@@ -245,6 +264,8 @@ Included:
 - AI Chat with in-session history
 - Secure Cloud Function backend for OpenAI Responses API
 - Finance context sent to backend for disciplined purchase, reminder-aware, and budget guidance
+- Firestore rules scoped to `users/{uid}`
+- Personal release and QA documentation
 
 Not included yet:
 

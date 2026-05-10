@@ -59,6 +59,18 @@ fun GoalsScreen(
             )
         }
         item { ErrorBanner(message = uiState.errorMessage, onDismiss = onClearError) }
+        item { StatusBanner(message = uiState.statusMessage, onDismiss = onClearError) }
+        if (uiState.isLoading) {
+            item { LoadingStateCard(message = "Loading goals and debt tracker...") }
+        }
+        if (!uiState.isLoading && uiState.data.goals.isEmpty()) {
+            item {
+                EmptyStateCard(
+                    title = "No savings goals yet",
+                    body = "Default envelopes will appear after your finance data finishes setup."
+                )
+            }
+        }
         items(uiState.data.goals, key = { it.id }) { goal ->
             GoalCard(
                 goal = goal,

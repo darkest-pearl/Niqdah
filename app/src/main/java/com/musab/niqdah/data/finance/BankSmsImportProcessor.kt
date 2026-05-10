@@ -2,7 +2,6 @@ package com.musab.niqdah.data.finance
 
 import android.Manifest
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -356,15 +355,7 @@ class BankSmsImportProcessor(
         if (!canPostNotifications()) return
 
         val notificationManager = appContext.getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            notificationManager.createNotificationChannel(
-                NotificationChannel(
-                    BankSmsNotificationActions.CHANNEL_ID,
-                    "Bank import reviews",
-                    NotificationManager.IMPORTANCE_DEFAULT
-                )
-            )
-        }
+        val channelId = NiqdahNotificationChannels.ensureBankImportReviews(appContext)
 
         val intent = Intent(appContext, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -395,7 +386,7 @@ class BankSmsImportProcessor(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val summary = pendingImport.notificationExpandedText()
-        val notification = Notification.Builder(appContext, BankSmsNotificationActions.CHANNEL_ID)
+        val notification = Notification.Builder(appContext, channelId)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(pendingImport.notificationTitle())
             .setContentText(pendingImport.notificationShortText())

@@ -13,7 +13,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -49,14 +48,10 @@ fun DashboardScreen(
             )
         }
         item { ErrorBanner(message = uiState.errorMessage, onDismiss = onClearError) }
+        item { StatusBanner(message = uiState.statusMessage, onDismiss = onClearError) }
         if (uiState.isLoading) {
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    CircularProgressIndicator()
-                }
+                LoadingStateCard(message = "Loading your finance dashboard...")
             }
         } else {
             item {
@@ -159,10 +154,9 @@ fun DashboardScreen(
             }
             if (dashboard.overspendingAlerts.isEmpty()) {
                 item {
-                    FinanceMetricCard(
+                    EmptyStateCard(
                         title = "No overspending",
-                        value = "On plan",
-                        subtitle = "Every category is within its monthly budget."
+                        body = "Every category is within its monthly budget."
                     )
                 }
             } else {
@@ -303,7 +297,7 @@ private fun OverspendingCard(title: String, amount: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
     ) {
         Row(
             modifier = Modifier.padding(16.dp),
@@ -313,11 +307,11 @@ private fun OverspendingCard(title: String, amount: String) {
             Icon(
                 imageVector = Icons.Rounded.Warning,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onErrorContainer
+                tint = MaterialTheme.colorScheme.onTertiaryContainer
             )
             Text(
                 text = "$title is over budget by $amount.",
-                color = MaterialTheme.colorScheme.onErrorContainer,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
                 style = MaterialTheme.typography.bodyLarge
             )
         }

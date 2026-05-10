@@ -2,7 +2,6 @@ package com.musab.niqdah.data.finance
 
 import android.Manifest
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -20,17 +19,9 @@ internal object InternalTransferNotificationPublisher {
         val appContext = context.applicationContext
         if (!appContext.canPostNotifications()) return
         val notificationManager = appContext.getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            notificationManager.createNotificationChannel(
-                NotificationChannel(
-                    BankSmsNotificationActions.CHANNEL_ID,
-                    "Bank import reviews",
-                    NotificationManager.IMPORTANCE_DEFAULT
-                )
-            )
-        }
+        val channelId = NiqdahNotificationChannels.ensureInternalTransferSafety(appContext)
 
-        val builder = Notification.Builder(appContext, BankSmsNotificationActions.CHANNEL_ID)
+        val builder = Notification.Builder(appContext, channelId)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(plan.title)
             .setContentText(plan.text)

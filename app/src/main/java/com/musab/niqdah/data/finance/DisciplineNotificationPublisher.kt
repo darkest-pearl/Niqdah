@@ -2,7 +2,6 @@ package com.musab.niqdah.data.finance
 
 import android.Manifest
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
@@ -14,21 +13,11 @@ import com.musab.niqdah.MainActivity
 import com.musab.niqdah.R
 
 internal object DisciplineNotificationPublisher {
-    private const val CHANNEL_ID = "discipline_reminders"
-
     fun show(context: Context, notificationId: Int, title: String, text: String) {
         val appContext = context.applicationContext
         if (!appContext.canPostNotifications()) return
         val notificationManager = appContext.getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            notificationManager.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "Discipline reminders",
-                    NotificationManager.IMPORTANCE_DEFAULT
-                )
-            )
-        }
+        val channelId = NiqdahNotificationChannels.ensureDisciplineReminders(appContext)
 
         val intent = PendingIntent.getActivity(
             appContext,
@@ -39,7 +28,7 @@ internal object DisciplineNotificationPublisher {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = Notification.Builder(appContext, CHANNEL_ID)
+        val notification = Notification.Builder(appContext, channelId)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(text)

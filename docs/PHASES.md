@@ -48,4 +48,6 @@ Notification behavior uses WorkManager local checks and posts only when `POST_NO
 
 ## Phase 6 Polish/Release
 
-Refine UI, accessibility, security rules, analytics, release signing, store metadata, QA, and production readiness.
+Refine UI consistency, save feedback, privacy notes, setup checklist, notification channels, Firebase security rules, personal APK release docs, and QA coverage. Complete for personal/dev APK preparation, not Play Store submission.
+
+Privacy constraints remain unchanged and are tightened in AI Chat: no `READ_SMS`, no raw automatic SMS body persisted to Firestore, no SMS content sent to OpenAI/backend, no OpenAI API key in the Android app, and no backend SMS access. Bank-like SMS text pasted into AI Chat is kept local and replaced with a parsed summary before backend calls.

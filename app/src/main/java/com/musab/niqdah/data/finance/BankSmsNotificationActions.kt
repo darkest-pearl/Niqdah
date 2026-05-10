@@ -7,7 +7,7 @@ internal object BankSmsNotificationActions {
     const val ACTION_SAVE = "com.musab.niqdah.bank_sms.SAVE"
     const val ACTION_DISMISS = "com.musab.niqdah.bank_sms.DISMISS"
     const val EXTRA_IMPORT_ID = "com.musab.niqdah.bank_sms.IMPORT_ID"
-    const val CHANNEL_ID = "bank_import_reviews"
+    const val CHANNEL_ID = NiqdahNotificationChannels.BANK_IMPORT_REVIEWS
 }
 
 internal object BankSmsNotificationActionRules {

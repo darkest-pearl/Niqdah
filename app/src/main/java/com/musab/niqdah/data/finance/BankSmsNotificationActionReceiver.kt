@@ -2,7 +2,6 @@ package com.musab.niqdah.data.finance
 
 import android.Manifest
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -63,6 +62,7 @@ class BankSmsNotificationActionReceiver : BroadcastReceiver() {
             try {
                 val uid = FirebaseProvider.auth(appContext)?.currentUser?.uid
                 if (uid.isNullOrBlank()) {
+                    appContext.showActionResultNotification("Sign in to save or dismiss this import.")
                     appContext.openTransactions()
                     return@launch
                 }
@@ -79,9 +79,18 @@ class BankSmsNotificationActionReceiver : BroadcastReceiver() {
                     BankSmsNotificationActions.ACTION_DISMISS -> {
                         if (handler.dismiss(importId)) {
                             appContext.cancelImportNotification(importId)
+                            appContext.showActionResultNotification("Pending import dismissed.")
+                        } else {
+                            appContext.showActionResultNotification(
+                                "Could not dismiss this import. Open Niqdah and try again."
+                            )
                         }
                     }
                 }
+            } catch (error: Throwable) {
+                appContext.showActionResultNotification(
+                    "Could not update this import: ${error.friendlyNotificationError()}"
+                )
             } finally {
                 pendingResult.finish()
             }
@@ -653,16 +662,8 @@ private fun Context.cancelImportNotification(importId: String) {
 private fun Context.showActionResultNotification(message: String) {
     if (!canPostNotifications()) return
     val notificationManager = getSystemService(NotificationManager::class.java)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        notificationManager.createNotificationChannel(
-            NotificationChannel(
-                BankSmsNotificationActions.CHANNEL_ID,
-                "Bank import reviews",
-                NotificationManager.IMPORTANCE_DEFAULT
-            )
-        )
-    }
-    val notification = Notification.Builder(this, BankSmsNotificationActions.CHANNEL_ID)
+    val channelId = NiqdahNotificationChannels.ensureBankImportReviews(this)
+    val notification = Notification.Builder(this, channelId)
         .setSmallIcon(R.drawable.ic_launcher_foreground)
         .setContentTitle("Niqdah")
         .setContentText(message)
@@ -677,3 +678,7 @@ private fun Context.canPostNotifications(): Boolean =
             this,
             Manifest.permission.POST_NOTIFICATIONS
         ) == PackageManager.PERMISSION_GRANTED
+
+private fun Throwable.friendlyNotificationError(): String =
+    message?.takeIf { it.isNotBlank() }
+        ?: "Open Niqdah and try again."

@@ -7,6 +7,25 @@ if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
 
+val releaseStoreFilePath =
+    providers.gradleProperty("NIQDAH_RELEASE_STORE_FILE").orNull
+        ?: System.getenv("NIQDAH_RELEASE_STORE_FILE")
+val releaseStorePassword =
+    providers.gradleProperty("NIQDAH_RELEASE_STORE_PASSWORD").orNull
+        ?: System.getenv("NIQDAH_RELEASE_STORE_PASSWORD")
+val releaseKeyAlias =
+    providers.gradleProperty("NIQDAH_RELEASE_KEY_ALIAS").orNull
+        ?: System.getenv("NIQDAH_RELEASE_KEY_ALIAS")
+val releaseKeyPassword =
+    providers.gradleProperty("NIQDAH_RELEASE_KEY_PASSWORD").orNull
+        ?: System.getenv("NIQDAH_RELEASE_KEY_PASSWORD")
+val hasReleaseSigningConfig = listOf(
+    releaseStoreFilePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.musab.niqdah"
     compileSdk = 35
@@ -21,8 +40,20 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (hasReleaseSigningConfig) {
+            create("release") {
+                storeFile = file(releaseStoreFilePath.orEmpty())
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfigs.findByName("release")?.let { signingConfig = it }
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

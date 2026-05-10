@@ -153,7 +153,7 @@ class FinanceViewModel(
         }
 
         if (validationError != null) {
-            _uiState.update { it.copy(errorMessage = validationError) }
+            showValidationError(validationError)
             return
         }
 
@@ -283,7 +283,7 @@ class FinanceViewModel(
         }
 
         if (validationError != null) {
-            _uiState.update { it.copy(errorMessage = validationError) }
+            showValidationError(validationError)
             onFailure?.invoke(validationError)
             return
         }
@@ -321,6 +321,10 @@ class FinanceViewModel(
     }
 
     fun updatePendingBankImport(pendingImport: PendingBankImport) {
+        validatePendingImportEdit(pendingImport)?.let { message ->
+            showValidationError(message)
+            return
+        }
         runSave {
             learnMerchantRuleIfNeeded(pendingImport)
             financeRepository.upsertPendingBankImport(
@@ -363,7 +367,7 @@ class FinanceViewModel(
     fun updateGoalSavedAmount(goal: SavingsGoal, savedAmountInput: String) {
         val savedAmount = savedAmountInput.toMoneyOrNull()
         if (savedAmount == null || savedAmount < 0.0) {
-            _uiState.update { it.copy(errorMessage = "Enter a valid saved amount.") }
+            showValidationError("Enter a valid saved amount.")
             return
         }
 
@@ -381,7 +385,7 @@ class FinanceViewModel(
         val payment = amountInput.toMoneyOrNull()
         val debt = _uiState.value.data.debt
         if (payment == null || payment <= 0.0) {
-            _uiState.update { it.copy(errorMessage = "Enter a valid debt payment amount.") }
+            showValidationError("Enter a valid debt payment amount.")
             return
         }
 
@@ -420,7 +424,7 @@ class FinanceViewModel(
         }
 
         if (validationError != null) {
-            _uiState.update { it.copy(errorMessage = validationError) }
+            showValidationError(validationError)
             return
         }
 
@@ -456,7 +460,7 @@ class FinanceViewModel(
         val updates = categories.map { category ->
             val amount = inputs[category.id].orEmpty().toMoneyOrNull()
             if (amount == null || amount < 0.0) {
-                _uiState.update { it.copy(errorMessage = "Enter a valid budget for ${category.name}.") }
+                showValidationError("Enter a valid budget for ${category.name}.")
                 return
             }
             category.copy(monthlyBudget = amount, updatedAtMillis = System.currentTimeMillis())
@@ -566,7 +570,7 @@ class FinanceViewModel(
         }
 
         if (validationError != null) {
-            _uiState.update { it.copy(errorMessage = validationError) }
+            showValidationError(validationError)
             return
         }
 
@@ -648,7 +652,7 @@ class FinanceViewModel(
         }
 
         if (validationError != null) {
-            _uiState.update { it.copy(errorMessage = validationError) }
+            showValidationError(validationError)
             return
         }
 
@@ -978,6 +982,15 @@ class FinanceViewModel(
             _uiState.update { it.copy(isSaving = true, errorMessage = null, statusMessage = null) }
             runCatching { block() }
                 .onSuccess { onSuccess?.invoke() }
+                .onSuccess {
+                    _uiState.update { state ->
+                        if (state.statusMessage == null) {
+                            state.copy(statusMessage = "Saved successfully.", errorMessage = null)
+                        } else {
+                            state.copy(errorMessage = null)
+                        }
+                    }
+                }
                 .onFailure { error ->
                     val message = error.friendlyFinanceMessage()
                     _uiState.update { it.copy(errorMessage = message) }
@@ -1149,8 +1162,16 @@ class FinanceViewModel(
             dateInput = FinanceDates.dateInputFromMillis(occurredAtMillis),
             confidence = confidence,
             senderName = senderName,
-            originalText = rawMessage
+            originalText = ""
         )
+
+    private fun validatePendingImportEdit(pendingImport: PendingBankImport): String? =
+        when {
+            pendingImport.amount == null || pendingImport.amount <= 0.0 -> "Enter a valid imported amount."
+            pendingImport.type == ParsedBankMessageType.EXPENSE &&
+                pendingImport.suggestedCategoryId.isNullOrBlank() -> "Choose a category."
+            else -> null
+        }
 
     private fun PendingBankImport.noteWithReviewContext(): String =
         listOf(description.trim(), reviewNote.trim())
@@ -1160,6 +1181,10 @@ class FinanceViewModel(
 
     private fun formatDraftAmount(amount: Double): String =
         if (amount % 1.0 == 0.0) amount.toLong().toString() else amount.toString()
+
+    private fun showValidationError(message: String) {
+        _uiState.update { it.copy(errorMessage = message, statusMessage = null) }
+    }
 
     private fun Throwable.friendlyFinanceMessage(): String =
         message?.takeIf { it.isNotBlank() }

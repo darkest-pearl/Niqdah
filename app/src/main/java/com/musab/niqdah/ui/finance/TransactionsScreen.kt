@@ -119,6 +119,9 @@ fun TransactionsScreen(
         }
         item { ErrorBanner(message = uiState.errorMessage, onDismiss = onClearError) }
         item { StatusBanner(message = uiState.statusMessage, onDismiss = onClearError) }
+        if (uiState.isLoading) {
+            item { LoadingStateCard(message = "Loading transactions and pending imports...") }
+        }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -164,7 +167,7 @@ fun TransactionsScreen(
         }
         if (pendingDisplayItems.isNotEmpty()) {
             item {
-                Text(text = "Pending Bank Imports", style = MaterialTheme.typography.titleLarge)
+                Text(text = "Pending bank imports", style = MaterialTheme.typography.titleLarge)
             }
             items(pendingDisplayItems, key = { it.key }) { displayItem ->
                 PendingBankImportCard(
@@ -181,10 +184,9 @@ fun TransactionsScreen(
 
         if (timelineItems.isEmpty()) {
             item {
-                FinanceMetricCard(
-                    title = "No transactions",
-                    value = "Ready",
-                    subtitle = "Add a transaction or import a pasted bank message."
+                EmptyStateCard(
+                    title = "No transactions yet",
+                    body = "Add a manual expense or preview a pasted bank message when you are ready."
                 )
             }
         } else {
@@ -715,6 +717,7 @@ private fun PendingBankImportEditDialog(
     var dateInput by remember(pendingImport.id) {
         mutableStateOf(FinanceDates.dateInputFromMillis(pendingImport.occurredAtMillis))
     }
+    var localError by remember(pendingImport.id) { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -724,7 +727,10 @@ private fun PendingBankImportEditDialog(
                 OutlinedTextField(
                     modifier = Modifier.fillMaxWidth(),
                     value = amount,
-                    onValueChange = { amount = it },
+                    onValueChange = {
+                        amount = it
+                        localError = null
+                    },
                     label = { Text("Amount") },
                     supportingText = {
                         if (pendingImport.reviewNote.isNotBlank()) {
@@ -771,7 +777,10 @@ private fun PendingBankImportEditDialog(
                 OutlinedTextField(
                     modifier = Modifier.fillMaxWidth(),
                     value = dateInput,
-                    onValueChange = { dateInput = it },
+                    onValueChange = {
+                        dateInput = it
+                        localError = null
+                    },
                     label = { Text("Date") },
                     supportingText = { Text("YYYY-MM-DD") },
                     singleLine = true
@@ -792,17 +801,36 @@ private fun PendingBankImportEditDialog(
                         )
                     }
                 }
+                localError?.let { message ->
+                    Text(
+                        text = message,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    val occurredAt = FinanceDates.parseDateInput(dateInput) ?: pendingImport.occurredAtMillis
+                    val parsedAmount = amount.trim().replace(",", "").toDoubleOrNull()
+                    val occurredAt = FinanceDates.parseDateInput(dateInput)
+                    val error = when {
+                        parsedAmount == null || parsedAmount <= 0.0 -> "Enter a valid imported amount."
+                        occurredAt == null -> "Enter the import date as YYYY-MM-DD."
+                        pendingImport.type == ParsedBankMessageType.EXPENSE && categoryId.isNullOrBlank() ->
+                            "Choose a category."
+                        else -> null
+                    }
+                    if (error != null) {
+                        localError = error
+                        return@Button
+                    }
                     val selectedCategory = categories.firstOrNull { it.id == categoryId }
                     onSave(
                         pendingImport.copy(
-                            amount = amount.trim().replace(",", "").toDoubleOrNull(),
-                            occurredAtMillis = occurredAt,
+                            amount = parsedAmount,
+                            occurredAtMillis = occurredAt ?: pendingImport.occurredAtMillis,
                             suggestedCategoryId = categoryId,
                             suggestedCategoryName = selectedCategory?.name ?: pendingImport.suggestedCategoryName,
                             suggestedNecessity = necessity,
@@ -851,7 +879,7 @@ private fun ImportBankMessageCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(text = "Import Message", style = MaterialTheme.typography.titleMedium)
+            Text(text = "Import bank message", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(
                 modifier = Modifier.fillMaxWidth(),
                 value = senderName,
@@ -925,8 +953,6 @@ private fun ImportBankMessageCard(
                             dateInput,
                             senderName
                         )
-                        preview = null
-                        message = ""
                     }
                 ) {
                     Text(if (isSaving) "Saving..." else "Save import")
@@ -1146,6 +1172,7 @@ private fun TransactionDialog(
     var necessity by remember(existing?.id) {
         mutableStateOf(existing?.necessity ?: NecessityLevel.NECESSARY)
     }
+    var localError by remember(existing?.id) { mutableStateOf<String?>(null) }
     var expanded by remember { mutableStateOf(false) }
     val categoryName = categories.firstOrNull { it.id == categoryId }?.name ?: "Choose category"
 
@@ -1157,7 +1184,10 @@ private fun TransactionDialog(
                 OutlinedTextField(
                     modifier = Modifier.fillMaxWidth(),
                     value = amount,
-                    onValueChange = { amount = it },
+                    onValueChange = {
+                        amount = it
+                        localError = null
+                    },
                     label = { Text("Amount ($currency)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
@@ -1191,7 +1221,10 @@ private fun TransactionDialog(
                 OutlinedTextField(
                     modifier = Modifier.fillMaxWidth(),
                     value = dateInput,
-                    onValueChange = { dateInput = it },
+                    onValueChange = {
+                        dateInput = it
+                        localError = null
+                    },
                     label = { Text("Date") },
                     supportingText = { Text("YYYY-MM-DD") },
                     singleLine = true
@@ -1212,12 +1245,32 @@ private fun TransactionDialog(
                         )
                     }
                 }
+                localError?.let { message ->
+                    Text(
+                        text = message,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
             }
         },
         confirmButton = {
             Button(
                 enabled = categories.isNotEmpty(),
-                onClick = { onSave(existing, amount, categoryId, note, necessity, dateInput) }
+                onClick = {
+                    val error = when {
+                        amount.trim().replace(",", "").toDoubleOrNull()?.let { it > 0.0 } != true ->
+                            "Enter a valid transaction amount."
+                        categoryId.isBlank() -> "Choose a category."
+                        FinanceDates.parseDateInput(dateInput) == null -> "Enter the date as YYYY-MM-DD."
+                        else -> null
+                    }
+                    if (error != null) {
+                        localError = error
+                    } else {
+                        onSave(existing, amount, categoryId, note, necessity, dateInput)
+                    }
+                }
             ) {
                 Text("Save")
             }

@@ -19,8 +19,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -48,10 +50,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.musab.niqdah.domain.finance.BudgetCategory
+import com.musab.niqdah.domain.finance.BankMessageParserSettings
 import com.musab.niqdah.domain.finance.MerchantRule
 import com.musab.niqdah.domain.finance.NecessaryItem
 import com.musab.niqdah.domain.finance.NecessaryItemRecurrence
 import com.musab.niqdah.domain.finance.NecessaryItemStatus
+import com.musab.niqdah.domain.finance.ReminderSettings
 
 @Composable
 fun SettingsScreen(
@@ -188,11 +192,35 @@ fun SettingsScreen(
             )
         }
         item { ErrorBanner(message = uiState.errorMessage, onDismiss = onClearError) }
+        item { StatusBanner(message = uiState.statusMessage, onDismiss = onClearError) }
+        if (uiState.isLoading) {
+            item { LoadingStateCard(message = "Loading settings...") }
+        }
         item {
             AccountCard(
                 userEmail = userEmail,
                 isSaving = uiState.isSaving,
                 onLogout = onLogout
+            )
+        }
+        item {
+            SetupChecklistCard(
+                userEmail = userEmail,
+                bankMessageSettings = uiState.data.bankMessageSettings,
+                reminderSettings = uiState.data.reminderSettings,
+                isSmsPermissionGranted = isSmsPermissionGranted,
+                isNotificationPermissionGranted = isNotificationPermissionGranted
+            )
+        }
+        item {
+            InfoNoteCard(
+                title = "Privacy note",
+                lines = listOf(
+                    "Niqdah reads only new bank SMS from configured senders.",
+                    "Niqdah does not read your old SMS inbox.",
+                    "Niqdah does not send SMS content to AI.",
+                    "AI receives financial summaries and context only."
+                )
             )
         }
         item {
@@ -423,6 +451,77 @@ private fun AccountCard(userEmail: String?, isSaving: Boolean, onLogout: () -> U
 }
 
 @Composable
+private fun SetupChecklistCard(
+    userEmail: String?,
+    bankMessageSettings: BankMessageParserSettings,
+    reminderSettings: ReminderSettings,
+    isSmsPermissionGranted: Boolean,
+    isNotificationPermissionGranted: Boolean
+) {
+    val rows = listOf(
+        "Firebase login" to !userEmail.isNullOrBlank(),
+        "Bank sender configured" to (
+            bankMessageSettings.dailyUseSource.senderName.isNotBlank() ||
+                bankMessageSettings.savingsSource.senderName.isNotBlank()
+            ),
+        "Daily account suffix" to (bankMessageSettings.dailyUseAccountSuffix.length == 4),
+        "Savings account suffix" to (bankMessageSettings.savingsAccountSuffix.length == 4),
+        "SMS permission" to isSmsPermissionGranted,
+        "Notification permission" to isNotificationPermissionGranted,
+        "Monthly savings target" to (reminderSettings.monthlySavingsTargetAmount > 0.0),
+        "January target" to (
+            reminderSettings.januaryTargetDate.isNotBlank() &&
+                reminderSettings.januaryFundTargetAmount > 0.0
+            )
+    )
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(text = "Setup checklist", style = MaterialTheme.typography.titleMedium)
+            rows.forEach { (label, isComplete) ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = if (isComplete) {
+                            Icons.Rounded.CheckCircle
+                        } else {
+                            Icons.Rounded.RadioButtonUnchecked
+                        },
+                        contentDescription = null,
+                        tint = if (isComplete) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                    Text(
+                        text = label,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = if (isComplete) "Done" else "Needs setup",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ProfileSettingsCard(
     salary: String,
     onSalaryChange: (String) -> Unit,
@@ -524,7 +623,7 @@ private fun BankMessageSourcesCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(text = "Bank Message Sources", style = MaterialTheme.typography.titleMedium)
+            Text(text = "Bank message sources", style = MaterialTheme.typography.titleMedium)
             Text(
                 text = "Niqdah can read new bank SMS messages from your selected senders to prepare expense and savings drafts.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -732,7 +831,7 @@ private fun ReminderSettingsCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(text = "Reminder Settings", style = MaterialTheme.typography.titleMedium)
+            Text(text = "Reminder settings", style = MaterialTheme.typography.titleMedium)
             SourceToggleRow(
                 title = "Monthly savings transfer reminder",
                 isEnabled = isMonthlySavingsReminderEnabled,
@@ -845,7 +944,7 @@ private fun NecessaryItemsCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(text = "Necessary Items", style = MaterialTheme.typography.titleMedium)
+            Text(text = "Necessary items", style = MaterialTheme.typography.titleMedium)
             Button(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isSaving,

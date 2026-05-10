@@ -10,6 +10,7 @@ import com.musab.niqdah.domain.ai.AiChatRole
 import com.musab.niqdah.domain.ai.AiChatBackendUnauthenticatedException
 import com.musab.niqdah.domain.ai.AiChatTokenVerificationException
 import com.musab.niqdah.domain.ai.AiFinanceContext
+import com.musab.niqdah.domain.ai.AiPrivacySanitizer
 import com.musab.niqdah.ui.finance.FinanceUiState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,13 +53,14 @@ class AiChatViewModel(
             return
         }
 
+        val draftAction = draftActionFactory(trimmed)
+        val sanitizedMessage = AiPrivacySanitizer.sanitizeUserMessage(trimmed, draftAction)
         val userMessage = AiChatMessage(
             id = UUID.randomUUID().toString(),
             role = AiChatRole.USER,
-            content = trimmed
+            content = sanitizedMessage.displayText
         )
         val history = _uiState.value.messages
-        val draftAction = draftActionFactory(trimmed)
 
         _uiState.update {
             it.copy(
@@ -74,7 +76,7 @@ class AiChatViewModel(
                 currentMonthSnapshot = financeUiState.dashboard.snapshot
             )
             repository.askNiqdah(
-                message = trimmed,
+                message = sanitizedMessage.backendText,
                 history = history,
                 context = context
             ).onSuccess { reply ->
