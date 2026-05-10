@@ -52,6 +52,8 @@ import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.ParsedBankMessage
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
+import com.musab.niqdah.domain.finance.PendingBankImportDisplayItem
+import com.musab.niqdah.domain.finance.PendingBankImportDisplayRules
 import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
 
 private sealed interface TransactionTimelineItem {
@@ -95,6 +97,7 @@ fun TransactionsScreen(
     val categories = uiState.data.categories
     val categoryById = categories.associateBy { it.id }
     val currency = uiState.data.profile.currency
+    val pendingDisplayItems = PendingBankImportDisplayRules.group(uiState.data.pendingBankImports)
     val timelineItems = (
         uiState.filteredTransactions.map { TransactionTimelineItem.ExpenseItem(it) } +
             uiState.filteredIncomeTransactions.map { TransactionTimelineItem.IncomeItem(it) } +
@@ -159,18 +162,13 @@ fun TransactionsScreen(
                 onSaveImportedBankMessage = onSaveImportedBankMessage
             )
         }
-        if (uiState.data.pendingBankImports.isNotEmpty()) {
+        if (pendingDisplayItems.isNotEmpty()) {
             item {
                 Text(text = "Pending Bank Imports", style = MaterialTheme.typography.titleLarge)
             }
-            items(uiState.data.pendingBankImports, key = { it.id }) { pendingImport ->
-                val hasMatchedPair = PendingBankImportSaveRules.findMatchingTransferCounterpart(
-                    pendingImport = pendingImport,
-                    candidates = uiState.data.pendingBankImports
-                ) != null
+            items(pendingDisplayItems, key = { it.key }) { displayItem ->
                 PendingBankImportCard(
-                    pendingImport = pendingImport,
-                    hasMatchedPair = hasMatchedPair,
+                    displayItem = displayItem,
                     reminderThresholdMinutes = uiState.data.bankMessageSettings.internalTransferReminderThresholdMinutes,
                     categories = categories,
                     isSaving = uiState.isSaving,
@@ -469,8 +467,7 @@ private fun InternalTransferRecordCard(
 
 @Composable
 private fun PendingBankImportCard(
-    pendingImport: PendingBankImport,
-    hasMatchedPair: Boolean,
+    displayItem: PendingBankImportDisplayItem,
     reminderThresholdMinutes: Int,
     categories: List<BudgetCategory>,
     isSaving: Boolean,
@@ -478,9 +475,12 @@ private fun PendingBankImportCard(
     onUpdate: (PendingBankImport) -> Unit,
     onDismiss: (PendingBankImport) -> Unit
 ) {
+    val pendingImport = displayItem.primaryImport
     var showMessage by remember(pendingImport.id) { mutableStateOf(false) }
     var isEditing by remember(pendingImport.id) { mutableStateOf(false) }
-    val isUnmatchedInternalDebit = pendingImport.type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT && !hasMatchedPair
+    val isUnmatchedInternalDebit = displayItem is PendingBankImportDisplayItem.InternalTransferWaiting
+    val hasMatchedPair = displayItem is PendingBankImportDisplayItem.InternalTransferReadyPair
+    val isCreditOnlySavingsTransfer = displayItem is PendingBankImportDisplayItem.CreditOnlySavingsTransfer
     val isPastReminderThreshold = isUnmatchedInternalDebit &&
         System.currentTimeMillis() - pendingImport.createdAtMillis.coerceAtLeast(pendingImport.receivedAtMillis) >=
         reminderThresholdMinutes.coerceAtLeast(1) * 60_000L
@@ -496,10 +496,18 @@ private fun PendingBankImportCard(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Text(
-                text = pendingImport.senderName.ifBlank { "Bank SMS" },
+                text = displayItem.pendingCardTitle(),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
+            displayItem.pendingCardSummary()?.let { summary ->
+                Text(
+                    text = summary,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
             PendingImportLine("Type", pendingImport.type.label)
             if (hasMatchedPair) {
                 Text(
@@ -524,6 +532,14 @@ private fun PendingBankImportCard(
                     },
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            if (isCreditOnlySavingsTransfer) {
+                Text(
+                    text = "Debit side was not found.",
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
             PendingImportLine(
@@ -587,21 +603,31 @@ private fun PendingBankImportCard(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    modifier = Modifier.weight(1f),
-                    enabled = !isSaving,
-                    onClick = { onSave(pendingImport) }
-                ) {
-                    Text(PendingBankImportSaveRules.saveButtonLabel(isSaving))
+                if (displayItem.isPrimarySaveVisible) {
+                    Button(
+                        modifier = Modifier.weight(1f),
+                        enabled = !isSaving,
+                        onClick = { onSave(pendingImport) }
+                    ) {
+                        Text(PendingBankImportSaveRules.saveButtonLabel(isSaving))
+                    }
                 }
                 OutlinedButton(
                     modifier = Modifier.weight(1f),
                     onClick = { isEditing = true }
                 ) {
-                    Text("Edit")
+                    Text(if (isUnmatchedInternalDebit) "Review" else "Edit")
                 }
                 TextButton(onClick = { onDismiss(pendingImport) }) {
                     Text("Dismiss")
+                }
+            }
+            if (displayItem.isManualSaveVisible) {
+                TextButton(
+                    enabled = !isSaving,
+                    onClick = { onSave(pendingImport) }
+                ) {
+                    Text(if (isSaving) "Saving..." else "Save unmatched transfer")
                 }
             }
         }
@@ -619,6 +645,36 @@ private fun PendingBankImportCard(
         )
     }
 }
+
+private fun PendingBankImportDisplayItem.pendingCardTitle(): String =
+    when (this) {
+        is PendingBankImportDisplayItem.InternalTransferWaiting -> "Internal transfer pending"
+        is PendingBankImportDisplayItem.InternalTransferReadyPair -> "Internal transfer ready"
+        is PendingBankImportDisplayItem.CreditOnlySavingsTransfer -> "Savings transfer pending"
+        is PendingBankImportDisplayItem.SinglePendingImport ->
+            pendingImport.senderName.ifBlank { "Bank SMS" }
+    }
+
+private fun PendingBankImportDisplayItem.pendingCardSummary(): String? =
+    when (this) {
+        is PendingBankImportDisplayItem.InternalTransferWaiting -> {
+            val amount = debitImport.amount?.let { formatMoney(it, debitImport.currency) } ?: "Amount missing"
+            val source = debitImport.sourceAccountSuffix.ifBlank { "source account" }
+            "$amount from $source - waiting for matching credit"
+        }
+        is PendingBankImportDisplayItem.InternalTransferReadyPair -> {
+            val amount = debitImport.amount?.let { formatMoney(it, debitImport.currency) } ?: "Amount missing"
+            val source = debitImport.sourceAccountSuffix.ifBlank { "source" }
+            val target = creditImport.targetAccountSuffix.ifBlank { "target" }
+            "$amount from $source to $target"
+        }
+        is PendingBankImportDisplayItem.CreditOnlySavingsTransfer -> {
+            val amount = creditImport.amount?.let { formatMoney(it, creditImport.currency) } ?: "Amount missing"
+            val target = creditImport.targetAccountSuffix.ifBlank { "savings account" }
+            "$amount credited to $target"
+        }
+        is PendingBankImportDisplayItem.SinglePendingImport -> null
+    }
 
 @Composable
 private fun PendingImportLine(label: String, value: String) {

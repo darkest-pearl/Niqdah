@@ -318,7 +318,13 @@ class FinanceViewModel(
     fun dismissPendingBankImport(pendingImport: PendingBankImport) {
         val now = System.currentTimeMillis()
         runSave {
-            financeRepository.deletePendingBankImport(pendingImport.id)
+            val paired = PendingBankImportSaveRules.findMatchingTransferCounterpart(
+                pendingImport = pendingImport,
+                candidates = _uiState.value.data.pendingBankImports
+            )
+            PendingBankImportSaveRules.idsToRemoveAfterSuccessfulSave(pendingImport, paired).forEach { id ->
+                financeRepository.deletePendingBankImport(id)
+            }
             financeRepository.upsertBankMessageImportHistory(
                 BankMessageImportHistory(
                     messageHash = pendingImport.messageHash,
@@ -327,6 +333,16 @@ class FinanceViewModel(
                     updatedAtMillis = now
                 )
             )
+            if (paired != null) {
+                financeRepository.upsertBankMessageImportHistory(
+                    BankMessageImportHistory(
+                        messageHash = paired.messageHash,
+                        status = BankMessageImportStatus.DISMISSED,
+                        senderName = paired.senderName,
+                        updatedAtMillis = now
+                    )
+                )
+            }
         }
     }
 
