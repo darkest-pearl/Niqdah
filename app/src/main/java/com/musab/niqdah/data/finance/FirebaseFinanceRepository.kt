@@ -30,9 +30,13 @@ import com.musab.niqdah.domain.finance.InternalTransferType
 import com.musab.niqdah.domain.finance.MerchantRule
 import com.musab.niqdah.domain.finance.MonthlySnapshot
 import com.musab.niqdah.domain.finance.NecessityLevel
+import com.musab.niqdah.domain.finance.NecessaryItem
+import com.musab.niqdah.domain.finance.NecessaryItemRecurrence
+import com.musab.niqdah.domain.finance.NecessaryItemStatus
 import com.musab.niqdah.domain.finance.ParsedBankMessageConfidence
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
+import com.musab.niqdah.domain.finance.ReminderSettings
 import com.musab.niqdah.domain.finance.SavingsGoal
 import com.musab.niqdah.domain.finance.UserProfile
 import kotlinx.coroutines.channels.awaitClose
@@ -84,6 +88,18 @@ class FirebaseFinanceRepository(
                 .set(FinanceDefaults.bankMessageParserSettings().toFirestore())
                 .awaitValue()
         }
+
+        if (!reminderSettingsDocument(db).get().awaitValue().exists()) {
+            reminderSettingsDocument(db)
+                .set(FinanceDefaults.reminderSettings(now).toFirestore())
+                .awaitValue()
+        }
+
+        if (necessaryItemsCollection(db).get().awaitValue().isEmpty) {
+            FinanceDefaults.necessaryItems(now).forEach { item ->
+                necessaryItemsCollection(db).document(item.id).set(item.toFirestore()).awaitValue()
+            }
+        }
     }
 
     override fun observeFinanceData(): Flow<FinanceData> {
@@ -119,12 +135,23 @@ class FirebaseFinanceRepository(
             )
         }
 
+        val disciplineExtrasFlow = combine(
+            observeReminderSettings(db),
+            observeNecessaryItems(db)
+        ) { reminderSettings, necessaryItems ->
+            DisciplineExtras(
+                reminderSettings = reminderSettings,
+                necessaryItems = necessaryItems
+            )
+        }
+
         return combine(
             coreFlow,
             observeGoals(db),
             observeDebt(db),
-            bankExtrasFlow
-        ) { core, goals, debt, bankExtras ->
+            bankExtrasFlow,
+            disciplineExtrasFlow
+        ) { core, goals, debt, bankExtras, disciplineExtras ->
             FinanceData(
                 profile = core.profile,
                 categories = core.categories,
@@ -136,7 +163,9 @@ class FirebaseFinanceRepository(
                 merchantRules = bankExtras.merchantRules,
                 goals = goals.ifEmpty { FinanceDefaults.savingsGoals() },
                 debt = debt,
-                bankMessageSettings = bankExtras.bankMessageSettings
+                bankMessageSettings = bankExtras.bankMessageSettings,
+                reminderSettings = disciplineExtras.reminderSettings,
+                necessaryItems = disciplineExtras.necessaryItems.ifEmpty { FinanceDefaults.necessaryItems() }
             )
         }
     }
@@ -220,6 +249,18 @@ class FirebaseFinanceRepository(
 
     override suspend fun upsertBankMessageSettings(settings: BankMessageParserSettings) {
         bankMessageSettingsDocument(requireFirestore()).set(settings.toFirestore()).awaitValue()
+    }
+
+    override suspend fun upsertReminderSettings(settings: ReminderSettings) {
+        reminderSettingsDocument(requireFirestore()).set(settings.toFirestore()).awaitValue()
+    }
+
+    override suspend fun upsertNecessaryItem(item: NecessaryItem) {
+        necessaryItemsCollection(requireFirestore()).document(item.id).set(item.toFirestore()).awaitValue()
+    }
+
+    override suspend fun deleteNecessaryItem(itemId: String) {
+        necessaryItemsCollection(requireFirestore()).document(itemId).delete().awaitValue()
     }
 
     override suspend fun saveMonthlySnapshot(snapshot: MonthlySnapshot) {
@@ -397,6 +438,34 @@ class FirebaseFinanceRepository(
             awaitClose { registration.remove() }
         }
 
+    private fun observeReminderSettings(db: FirebaseFirestore): Flow<ReminderSettings> =
+        callbackFlow {
+            val registration = reminderSettingsDocument(db).addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                trySend(snapshot?.toReminderSettings() ?: FinanceDefaults.reminderSettings())
+            }
+            awaitClose { registration.remove() }
+        }
+
+    private fun observeNecessaryItems(db: FirebaseFirestore): Flow<List<NecessaryItem>> =
+        callbackFlow {
+            val registration = necessaryItemsCollection(db).addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val items = snapshot?.documents
+                    ?.map { it.toNecessaryItem() }
+                    ?.sortedWith(compareBy<NecessaryItem> { it.status.ordinal }.thenBy { it.title })
+                    ?: emptyList()
+                trySend(items)
+            }
+            awaitClose { registration.remove() }
+        }
+
     private fun userDocument(db: FirebaseFirestore): DocumentReference =
         db.collection(FirestoreCollections.USERS).document(uid)
 
@@ -411,6 +480,9 @@ class FirebaseFinanceRepository(
 
     private fun bankMessageSettingsDocument(db: FirebaseFirestore): DocumentReference =
         financeCollection(db).document("bankMessageSettings")
+
+    private fun reminderSettingsDocument(db: FirebaseFirestore): DocumentReference =
+        financeCollection(db).document("reminderSettings")
 
     private fun categoriesCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.BUDGET_CATEGORIES)
@@ -438,6 +510,9 @@ class FirebaseFinanceRepository(
 
     private fun goalsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.SAVINGS_GOALS)
+
+    private fun necessaryItemsCollection(db: FirebaseFirestore): CollectionReference =
+        userDocument(db).collection(FirestoreCollections.NECESSARY_ITEMS)
 
     private fun snapshotsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.MONTHLY_SNAPSHOTS)
@@ -611,6 +686,37 @@ class FirebaseFinanceRepository(
             "debtStarting" to debtStarting,
             "healthSummary" to healthSummary,
             "generatedAtMillis" to generatedAtMillis
+        )
+
+    private fun ReminderSettings.toFirestore(): Map<String, Any> =
+        mapOf(
+            "isMonthlySavingsReminderEnabled" to isMonthlySavingsReminderEnabled,
+            "monthlySavingsReminderDay" to monthlySavingsReminderDay,
+            "monthlySavingsReminderHour" to monthlySavingsReminderHour,
+            "monthlySavingsReminderMinute" to monthlySavingsReminderMinute,
+            "monthlySavingsTargetAmount" to monthlySavingsTargetAmount,
+            "isMissedSavingsReminderEnabled" to isMissedSavingsReminderEnabled,
+            "missedSavingsCheckDay" to missedSavingsCheckDay,
+            "missedSavingsReminderHour" to missedSavingsReminderHour,
+            "missedSavingsReminderMinute" to missedSavingsReminderMinute,
+            "areOverspendingWarningsEnabled" to areOverspendingWarningsEnabled,
+            "isAvoidCategoryWarningEnabled" to isAvoidCategoryWarningEnabled,
+            "januaryTargetDate" to januaryTargetDate,
+            "januaryFundTargetAmount" to januaryFundTargetAmount,
+            "updatedAtMillis" to updatedAtMillis
+        )
+
+    private fun NecessaryItem.toFirestore(): Map<String, Any?> =
+        mapOf(
+            "title" to title,
+            "amount" to amount,
+            "dueDayOfMonth" to dueDayOfMonth,
+            "dueDateMillis" to dueDateMillis,
+            "recurrence" to recurrence.name,
+            "status" to status.name,
+            "isNotificationEnabled" to isNotificationEnabled,
+            "createdAtMillis" to createdAtMillis,
+            "updatedAtMillis" to updatedAtMillis
         )
 
     private fun BankMessageParserSettings.toFirestore(): Map<String, Any> =
@@ -823,6 +929,65 @@ class FirebaseFinanceRepository(
         )
     }
 
+    private fun DocumentSnapshot.toReminderSettings(): ReminderSettings {
+        val defaults = FinanceDefaults.reminderSettings()
+        return ReminderSettings(
+            isMonthlySavingsReminderEnabled = getBoolean("isMonthlySavingsReminderEnabled")
+                ?: defaults.isMonthlySavingsReminderEnabled,
+            monthlySavingsReminderDay = int(
+                field = "monthlySavingsReminderDay",
+                default = defaults.monthlySavingsReminderDay
+            ).coerceIn(1, 31),
+            monthlySavingsReminderHour = int(
+                field = "monthlySavingsReminderHour",
+                default = defaults.monthlySavingsReminderHour
+            ).coerceIn(0, 23),
+            monthlySavingsReminderMinute = int(
+                field = "monthlySavingsReminderMinute",
+                default = defaults.monthlySavingsReminderMinute
+            ).coerceIn(0, 59),
+            monthlySavingsTargetAmount = double(
+                "monthlySavingsTargetAmount",
+                defaults.monthlySavingsTargetAmount
+            ),
+            isMissedSavingsReminderEnabled = getBoolean("isMissedSavingsReminderEnabled")
+                ?: defaults.isMissedSavingsReminderEnabled,
+            missedSavingsCheckDay = int(
+                field = "missedSavingsCheckDay",
+                default = defaults.missedSavingsCheckDay
+            ).coerceIn(1, 31),
+            missedSavingsReminderHour = int(
+                field = "missedSavingsReminderHour",
+                default = defaults.missedSavingsReminderHour
+            ).coerceIn(0, 23),
+            missedSavingsReminderMinute = int(
+                field = "missedSavingsReminderMinute",
+                default = defaults.missedSavingsReminderMinute
+            ).coerceIn(0, 59),
+            areOverspendingWarningsEnabled = getBoolean("areOverspendingWarningsEnabled")
+                ?: defaults.areOverspendingWarningsEnabled,
+            isAvoidCategoryWarningEnabled = getBoolean("isAvoidCategoryWarningEnabled")
+                ?: defaults.isAvoidCategoryWarningEnabled,
+            januaryTargetDate = getString("januaryTargetDate") ?: defaults.januaryTargetDate,
+            januaryFundTargetAmount = double("januaryFundTargetAmount", defaults.januaryFundTargetAmount),
+            updatedAtMillis = long("updatedAtMillis", defaults.updatedAtMillis)
+        )
+    }
+
+    private fun DocumentSnapshot.toNecessaryItem(): NecessaryItem =
+        NecessaryItem(
+            id = id,
+            title = getString("title") ?: id,
+            amount = nullableDouble("amount"),
+            dueDayOfMonth = int("dueDayOfMonth", 1).coerceIn(1, 31),
+            dueDateMillis = (get("dueDateMillis") as? Number)?.toLong(),
+            recurrence = necessaryItemRecurrence(getString("recurrence")),
+            status = necessaryItemStatus(getString("status")),
+            isNotificationEnabled = getBoolean("isNotificationEnabled") ?: true,
+            createdAtMillis = long("createdAtMillis"),
+            updatedAtMillis = long("updatedAtMillis")
+        )
+
     private fun DocumentSnapshot.double(field: String, default: Double = 0.0): Double =
         (get(field) as? Number)?.toDouble() ?: default
 
@@ -831,6 +996,9 @@ class FirebaseFinanceRepository(
 
     private fun DocumentSnapshot.long(field: String, default: Long = 0L): Long =
         (get(field) as? Number)?.toLong() ?: default
+
+    private fun DocumentSnapshot.int(field: String, default: Int = 0): Int =
+        (get(field) as? Number)?.toInt() ?: default
 
     private fun DocumentSnapshot.stringList(field: String, default: List<String>): List<String> =
         (get(field) as? List<*>)
@@ -865,6 +1033,14 @@ class FirebaseFinanceRepository(
         ParsedBankMessageConfidence.entries.firstOrNull { it.name == value }
             ?: ParsedBankMessageConfidence.LOW
 
+    private fun necessaryItemRecurrence(value: String?): NecessaryItemRecurrence =
+        NecessaryItemRecurrence.entries.firstOrNull { it.name == value }
+            ?: NecessaryItemRecurrence.MONTHLY
+
+    private fun necessaryItemStatus(value: String?): NecessaryItemStatus =
+        NecessaryItemStatus.entries.firstOrNull { it.name == value }
+            ?: NecessaryItemStatus.PENDING
+
     private fun accountKind(value: String?): AccountKind? =
         AccountKind.entries.firstOrNull { it.name == value }
 
@@ -894,4 +1070,9 @@ private data class BankExtras(
     val accountBalanceSnapshots: List<AccountBalanceSnapshot>,
     val internalTransferRecords: List<InternalTransferRecord>,
     val merchantRules: List<MerchantRule>
+)
+
+private data class DisciplineExtras(
+    val reminderSettings: ReminderSettings,
+    val necessaryItems: List<NecessaryItem>
 )

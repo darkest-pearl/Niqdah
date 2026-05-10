@@ -25,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.musab.niqdah.data.ai.FirebaseAiChatRepository
 import com.musab.niqdah.data.auth.FirebaseAuthRepository
+import com.musab.niqdah.data.finance.AndroidDisciplineReminderScheduler
 import com.musab.niqdah.data.finance.FirebaseFinanceRepository
 import com.musab.niqdah.domain.auth.AuthState
 import com.musab.niqdah.ui.ai.AiChatViewModel
@@ -55,9 +56,12 @@ fun NiqdahApp(openTransactionsRequest: Int = 0) {
             val financeRepository = remember(context, authState.uid) {
                 FirebaseFinanceRepository(context, authState.uid)
             }
+            val reminderScheduler = remember(context, authState.uid) {
+                AndroidDisciplineReminderScheduler(context, authState.uid)
+            }
             val financeViewModel: FinanceViewModel = viewModel(
                 key = "finance-${authState.uid}",
-                factory = FinanceViewModel.Factory(financeRepository)
+                factory = FinanceViewModel.Factory(financeRepository, reminderScheduler)
             )
             val financeUiState by financeViewModel.uiState.collectAsStateWithLifecycle()
             val aiChatRepository = remember(context) { FirebaseAiChatRepository(context) }

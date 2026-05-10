@@ -12,8 +12,11 @@ import com.musab.niqdah.domain.ai.AiChatRole
 import com.musab.niqdah.domain.ai.AiChatTokenVerificationException
 import com.musab.niqdah.domain.ai.AiFinanceContext
 import com.musab.niqdah.domain.finance.BudgetCategory
+import com.musab.niqdah.domain.finance.CategoryBudgetWarning
+import com.musab.niqdah.domain.finance.DisciplineCalculator
 import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.IncomeTransaction
+import com.musab.niqdah.domain.finance.NecessaryItemDue
 import com.musab.niqdah.domain.finance.SavingsGoal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -156,6 +159,10 @@ class FirebaseAiChatRepository(context: Context) : AiChatRepository {
             .sortedByDescending { it.occurredAtMillis }
             .take(recentTransactionLimit)
             .map { it.toPayload() }
+        val disciplineStatus = DisciplineCalculator.status(
+            data = data,
+            yearMonth = currentMonthSnapshot.yearMonth
+        )
 
         return mapOf(
             "profile" to mapOf(
@@ -182,6 +189,29 @@ class FirebaseAiChatRepository(context: Context) : AiChatRepository {
             ),
             "categoryBudgets" to data.categories.map { it.toPayload() },
             "savingsGoals" to data.goals.map { it.toPayload() },
+            "disciplineStatus" to mapOf(
+                "currentSavingsProgress" to mapOf(
+                    "savedThisMonth" to disciplineStatus.savingsTarget.savedThisMonth,
+                    "targetAmount" to disciplineStatus.savingsTarget.targetAmount,
+                    "shortfall" to disciplineStatus.savingsTarget.shortfall,
+                    "progress" to disciplineStatus.savingsTarget.progress
+                ),
+                "categoryWarnings" to disciplineStatus.categoryWarnings.map { it.toPayload() },
+                "overspentCategories" to disciplineStatus.categoryWarnings
+                    .filter { it.percentUsed > 1.0 }
+                    .map { it.toPayload() },
+                "necessaryItemsDue" to disciplineStatus.necessaryItemsDueSoon.map { it.toPayload() },
+                "avoidSpendingThisMonth" to disciplineStatus.avoidSpendingThisMonth,
+                "safeToSpendAmount" to disciplineStatus.safeToSpendAmount,
+                "januaryCountdown" to mapOf(
+                    "targetDate" to disciplineStatus.januaryCountdown.targetDate,
+                    "daysRemaining" to disciplineStatus.januaryCountdown.daysRemaining,
+                    "monthsRemaining" to disciplineStatus.januaryCountdown.monthsRemaining,
+                    "currentSaved" to disciplineStatus.januaryCountdown.currentSaved,
+                    "targetAmount" to disciplineStatus.januaryCountdown.targetAmount,
+                    "requiredMonthlySavings" to disciplineStatus.januaryCountdown.requiredMonthlySavings
+                )
+            ),
             "recentTransactions" to recentTransactions,
             "recentIncomeTransactions" to recentIncomeTransactions
         )
@@ -201,6 +231,28 @@ class FirebaseAiChatRepository(context: Context) : AiChatRepository {
             "name" to name,
             "targetAmount" to targetAmount,
             "savedAmount" to savedAmount
+        )
+
+    private fun CategoryBudgetWarning.toPayload(): Map<String, Any> =
+        mapOf(
+            "categoryId" to category.id,
+            "categoryName" to category.name,
+            "spent" to spent,
+            "budget" to budget,
+            "percentUsed" to percentUsed,
+            "level" to level.name,
+            "message" to message
+        )
+
+    private fun NecessaryItemDue.toPayload(): Map<String, Any?> =
+        mapOf(
+            "id" to item.id,
+            "title" to item.title,
+            "amount" to item.amount,
+            "dueDateMillis" to dueDateMillis,
+            "daysUntilDue" to daysUntilDue,
+            "recurrence" to item.recurrence.label,
+            "status" to item.status.label
         )
 
     private fun ExpenseTransaction.toPayload(categoryName: String): Map<String, Any> =

@@ -51,6 +51,8 @@ Then explain briefly why and give one practical next step.
 
 You cannot write to Firestore, update settings, or log transactions. The Android app performs financial writes only after the user reviews and taps Save.
 Never claim that you saved, logged, recorded, updated, added, or changed a transaction, savings transfer, debt payment, category, budget, goal, or setting.
+Use reminder and discipline status from financeContext when advising: savings progress, overspent categories, necessary items due, safe-to-spend amount, and January countdown.
+Do not create, schedule, update, or promise reminders unless the Android app UI explicitly presents a reviewable reminder action.
 For financial actions, say "I can prepare this for saving." or "Review and save it in the app."
 Only say something was saved, logged, or updated if the request explicitly includes an app-provided confirmation that saving succeeded.
 `.trim();

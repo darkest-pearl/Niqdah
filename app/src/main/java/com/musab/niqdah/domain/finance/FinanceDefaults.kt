@@ -13,6 +13,9 @@ object FinanceDefaults {
     const val AVOID_CATEGORY_ID = "avoid"
     const val MARRIAGE_SAVINGS_CATEGORY_ID = "marriage_savings"
     const val DEFAULT_INTERNAL_TRANSFER_REMINDER_MINUTES = 10
+    const val DEFAULT_JANUARY_TARGET_DATE = "2027-01-01"
+    const val DEFAULT_MARRIAGE_FUND_TARGET = 13600.0
+    const val DEFAULT_MONTHLY_SAVINGS_TARGET = 1700.0
 
     val DEFAULT_DEBIT_KEYWORDS = listOf(
         "debited",
@@ -59,7 +62,7 @@ object FinanceDefaults {
             currency = DEFAULT_CURRENCY,
             salary = 5000.0,
             extraIncome = 500.0,
-            monthlySavingsTarget = 1700.0,
+            monthlySavingsTarget = DEFAULT_MONTHLY_SAVINGS_TARGET,
             createdAtMillis = now,
             updatedAtMillis = now
         )
@@ -133,7 +136,7 @@ object FinanceDefaults {
             BudgetCategory(
                 id = MARRIAGE_SAVINGS_CATEGORY_ID,
                 name = "Marriage savings",
-                monthlyBudget = 1700.0,
+                monthlyBudget = DEFAULT_MONTHLY_SAVINGS_TARGET,
                 type = CategoryType.SAVINGS,
                 createdAtMillis = now,
                 updatedAtMillis = now
@@ -161,7 +164,7 @@ object FinanceDefaults {
             SavingsGoal(
                 id = MARRIAGE_GOAL_ID,
                 name = "Marriage fund",
-                targetAmount = 13600.0,
+                targetAmount = DEFAULT_MARRIAGE_FUND_TARGET,
                 createdAtMillis = now,
                 updatedAtMillis = now
             ),
@@ -221,5 +224,81 @@ object FinanceDefaults {
             debitKeywords = DEFAULT_DEBIT_KEYWORDS,
             creditKeywords = DEFAULT_CREDIT_KEYWORDS,
             savingsTransferKeywords = DEFAULT_SAVINGS_TRANSFER_KEYWORDS
+        )
+
+    fun reminderSettings(now: Long = System.currentTimeMillis()): ReminderSettings =
+        ReminderSettings(
+            isMonthlySavingsReminderEnabled = true,
+            monthlySavingsReminderDay = 1,
+            monthlySavingsReminderHour = 9,
+            monthlySavingsReminderMinute = 0,
+            monthlySavingsTargetAmount = DEFAULT_MONTHLY_SAVINGS_TARGET,
+            isMissedSavingsReminderEnabled = true,
+            missedSavingsCheckDay = 20,
+            missedSavingsReminderHour = 19,
+            missedSavingsReminderMinute = 0,
+            areOverspendingWarningsEnabled = true,
+            isAvoidCategoryWarningEnabled = true,
+            januaryTargetDate = DEFAULT_JANUARY_TARGET_DATE,
+            januaryFundTargetAmount = DEFAULT_MARRIAGE_FUND_TARGET,
+            updatedAtMillis = now
+        )
+
+    fun necessaryItems(now: Long = System.currentTimeMillis()): List<NecessaryItem> =
+        listOf(
+            NecessaryItem(
+                id = "rent",
+                title = "Rent",
+                amount = 1300.0,
+                dueDayOfMonth = 1,
+                recurrence = NecessaryItemRecurrence.MONTHLY,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            NecessaryItem(
+                id = "savings_transfer",
+                title = "Savings transfer",
+                amount = DEFAULT_MONTHLY_SAVINGS_TARGET,
+                dueDayOfMonth = 1,
+                recurrence = NecessaryItemRecurrence.MONTHLY,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            NecessaryItem(
+                id = "debt_payment",
+                title = "Debt payment",
+                amount = 500.0,
+                dueDayOfMonth = 1,
+                recurrence = NecessaryItemRecurrence.MONTHLY,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            NecessaryItem(
+                id = "medical",
+                title = "Medical appointment",
+                amount = null,
+                dueDayOfMonth = 15,
+                recurrence = NecessaryItemRecurrence.MONTHLY,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            NecessaryItem(
+                id = "dental",
+                title = "Braces/dental",
+                amount = null,
+                dueDayOfMonth = 15,
+                recurrence = NecessaryItemRecurrence.MONTHLY,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            NecessaryItem(
+                id = "groceries_basics",
+                title = "Groceries basics",
+                amount = null,
+                dueDayOfMonth = 5,
+                recurrence = NecessaryItemRecurrence.MONTHLY,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            )
         )
 }

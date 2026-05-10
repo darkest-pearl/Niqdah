@@ -176,6 +176,10 @@ fun MainShell(
                         internalTransferReminderThresholdMinutes = reminderMinutes
                     )
                 },
+                onUpdateReminderSettings = financeViewModel::updateReminderSettings,
+                onSaveNecessaryItem = financeViewModel::saveNecessaryItem,
+                onUpdateNecessaryItemStatus = financeViewModel::updateNecessaryItemStatus,
+                onDeleteNecessaryItem = financeViewModel::deleteNecessaryItem,
                 onLogout = onLogout,
                 onClearError = financeViewModel::clearError
             )

@@ -12,6 +12,7 @@ object FirestoreCollections {
     const val INTERNAL_TRANSFER_RECORDS = "internalTransferRecords"
     const val MERCHANT_RULES = "merchantRules"
     const val SAVINGS_GOALS = "savingsGoals"
+    const val NECESSARY_ITEMS = "necessaryItems"
     const val MONTHLY_SNAPSHOTS = "monthlySnapshots"
     const val CHAT_SESSIONS = "chatSessions"
 }

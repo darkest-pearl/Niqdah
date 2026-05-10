@@ -32,7 +32,19 @@ Consider notification-listener import, statement import, or inbox scan support o
 
 ## Phase 5 Reminders
 
-Add reminders for spending reviews, debt payments, savings contributions, and weekly plan check-ins.
+Add personal financial discipline reminders and warning systems. Complete for the first local-notification version.
+
+Included:
+
+- Monthly marriage savings transfer reminder with editable day, time, and target amount.
+- Missed savings reminder that gently reports the current shortfall after a configured check day.
+- Overspending warnings for variable categories at 75%, 100%, and over 100% of budget.
+- Avoid-category warning after save without shame wording.
+- Necessary items list with optional amount, due day/date, monthly or one-time recurrence, pending/done/skipped status, and notification toggle.
+- Dashboard discipline card and January countdown card with editable target date and total fund target.
+- AI Chat context includes savings progress, overspent categories, necessary items due, safe-to-spend, and January countdown status.
+
+Notification behavior uses WorkManager local checks and posts only when `POST_NOTIFICATIONS` is already granted. Privacy constraints remain unchanged: no `READ_SMS`, no SMS content sent to OpenAI, no backend SMS access, no OpenAI API key in the Android app, and no reminder creation by AI without explicit app UI support.
 
 ## Phase 6 Polish/Release
 

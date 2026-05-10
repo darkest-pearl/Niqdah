@@ -14,6 +14,7 @@ import com.musab.niqdah.domain.finance.BankMessageSourceSettings
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.DashboardMetrics
 import com.musab.niqdah.domain.finance.DebtTracker
+import com.musab.niqdah.domain.finance.DisciplineReminderScheduler
 import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.FinanceCalculator
 import com.musab.niqdah.domain.finance.FinanceData
@@ -24,10 +25,14 @@ import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.InternalTransferRecord
 import com.musab.niqdah.domain.finance.MerchantRule
 import com.musab.niqdah.domain.finance.NecessityLevel
+import com.musab.niqdah.domain.finance.NecessaryItem
+import com.musab.niqdah.domain.finance.NecessaryItemRecurrence
+import com.musab.niqdah.domain.finance.NecessaryItemStatus
 import com.musab.niqdah.domain.finance.ParsedBankMessage
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
 import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
+import com.musab.niqdah.domain.finance.ReminderSettings
 import com.musab.niqdah.domain.finance.SaveResult
 import com.musab.niqdah.domain.finance.SavingsGoal
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -82,7 +87,8 @@ data class FinanceUiState(
 }
 
 class FinanceViewModel(
-    private val financeRepository: FinanceRepository
+    private val financeRepository: FinanceRepository,
+    private val reminderScheduler: DisciplineReminderScheduler? = null
 ) : ViewModel() {
     private val dashboardMonth = FinanceDates.currentYearMonth()
     private val bankMessageParser = BankMessageParser()
@@ -104,6 +110,7 @@ class FinanceViewModel(
                         )
                     }
                     runCatching { financeRepository.saveMonthlySnapshot(dashboard.snapshot) }
+                    runCatching { reminderScheduler?.schedule(data) }
                 }
             }.onFailure { error ->
                 _uiState.update {
@@ -167,7 +174,14 @@ class FinanceViewModel(
             updatedAtMillis = now
         )
 
-        runSave { financeRepository.upsertTransaction(transaction) }
+        runSave(
+            onSuccess = {
+                avoidWarningMessage(categoryId = transaction.categoryId, necessity = transaction.necessity)
+                    ?.let { message -> _uiState.update { it.copy(statusMessage = message) } }
+            }
+        ) {
+            financeRepository.upsertTransaction(transaction)
+        }
     }
 
     fun deleteTransaction(transactionId: String) {
@@ -505,6 +519,171 @@ class FinanceViewModel(
         runSave { financeRepository.upsertBankMessageSettings(settings) }
     }
 
+    fun updateReminderSettings(
+        isMonthlySavingsReminderEnabled: Boolean,
+        monthlySavingsReminderDayInput: String,
+        monthlySavingsReminderHourInput: String,
+        monthlySavingsReminderMinuteInput: String,
+        monthlySavingsTargetAmountInput: String,
+        isMissedSavingsReminderEnabled: Boolean,
+        missedSavingsCheckDayInput: String,
+        missedSavingsReminderHourInput: String,
+        missedSavingsReminderMinuteInput: String,
+        areOverspendingWarningsEnabled: Boolean,
+        isAvoidCategoryWarningEnabled: Boolean,
+        januaryTargetDateInput: String,
+        januaryFundTargetAmountInput: String
+    ) {
+        val monthlySavingsReminderDay = monthlySavingsReminderDayInput.trim().toIntOrNull()
+        val monthlySavingsReminderHour = monthlySavingsReminderHourInput.trim().toIntOrNull()
+        val monthlySavingsReminderMinute = monthlySavingsReminderMinuteInput.trim().toIntOrNull()
+        val monthlySavingsTargetAmount = monthlySavingsTargetAmountInput.toMoneyOrNull()
+        val missedSavingsCheckDay = missedSavingsCheckDayInput.trim().toIntOrNull()
+        val missedSavingsReminderHour = missedSavingsReminderHourInput.trim().toIntOrNull()
+        val missedSavingsReminderMinute = missedSavingsReminderMinuteInput.trim().toIntOrNull()
+        val januaryTargetDate = FinanceDates.parseDateInput(januaryTargetDateInput)
+        val januaryFundTargetAmount = januaryFundTargetAmountInput.toMoneyOrNull()
+
+        val validationError = when {
+            monthlySavingsReminderDay == null || monthlySavingsReminderDay !in 1..31 ->
+                "Enter a monthly savings reminder day from 1 to 31."
+            monthlySavingsReminderHour == null || monthlySavingsReminderHour !in 0..23 ->
+                "Enter a monthly savings reminder hour from 0 to 23."
+            monthlySavingsReminderMinute == null || monthlySavingsReminderMinute !in 0..59 ->
+                "Enter a monthly savings reminder minute from 0 to 59."
+            monthlySavingsTargetAmount == null || monthlySavingsTargetAmount < 0.0 ->
+                "Enter a valid monthly savings target."
+            missedSavingsCheckDay == null || missedSavingsCheckDay !in 1..31 ->
+                "Enter a missed savings check day from 1 to 31."
+            missedSavingsReminderHour == null || missedSavingsReminderHour !in 0..23 ->
+                "Enter a missed savings reminder hour from 0 to 23."
+            missedSavingsReminderMinute == null || missedSavingsReminderMinute !in 0..59 ->
+                "Enter a missed savings reminder minute from 0 to 59."
+            januaryTargetDate == null -> "Enter the January target date as YYYY-MM-DD."
+            januaryFundTargetAmount == null || januaryFundTargetAmount < 0.0 ->
+                "Enter a valid January fund target."
+            else -> null
+        }
+
+        if (validationError != null) {
+            _uiState.update { it.copy(errorMessage = validationError) }
+            return
+        }
+
+        val parsedMonthlySavingsTargetAmount = monthlySavingsTargetAmount ?: return
+        val parsedJanuaryFundTargetAmount = januaryFundTargetAmount ?: return
+        val now = System.currentTimeMillis()
+        val current = _uiState.value.data
+        val settings = ReminderSettings(
+            isMonthlySavingsReminderEnabled = isMonthlySavingsReminderEnabled,
+            monthlySavingsReminderDay = monthlySavingsReminderDay ?: return,
+            monthlySavingsReminderHour = monthlySavingsReminderHour ?: return,
+            monthlySavingsReminderMinute = monthlySavingsReminderMinute ?: return,
+            monthlySavingsTargetAmount = parsedMonthlySavingsTargetAmount,
+            isMissedSavingsReminderEnabled = isMissedSavingsReminderEnabled,
+            missedSavingsCheckDay = missedSavingsCheckDay ?: return,
+            missedSavingsReminderHour = missedSavingsReminderHour ?: return,
+            missedSavingsReminderMinute = missedSavingsReminderMinute ?: return,
+            areOverspendingWarningsEnabled = areOverspendingWarningsEnabled,
+            isAvoidCategoryWarningEnabled = isAvoidCategoryWarningEnabled,
+            januaryTargetDate = januaryTargetDateInput.trim(),
+            januaryFundTargetAmount = parsedJanuaryFundTargetAmount,
+            updatedAtMillis = now
+        )
+
+        runSave {
+            financeRepository.upsertReminderSettings(settings)
+            financeRepository.upsertProfile(
+                current.profile.copy(
+                    monthlySavingsTarget = parsedMonthlySavingsTargetAmount,
+                    updatedAtMillis = now
+                )
+            )
+            current.categories
+                .firstOrNull { it.id == FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID }
+                ?.let { category ->
+                    financeRepository.upsertCategory(
+                        category.copy(
+                            monthlyBudget = parsedMonthlySavingsTargetAmount,
+                            updatedAtMillis = now
+                        )
+                    )
+                }
+            current.goals
+                .firstOrNull { it.id == FinanceDefaults.MARRIAGE_GOAL_ID }
+                ?.let { goal ->
+                    financeRepository.upsertGoal(
+                        goal.copy(
+                            targetAmount = parsedJanuaryFundTargetAmount,
+                            updatedAtMillis = now
+                        )
+                    )
+                }
+        }
+    }
+
+    fun saveNecessaryItem(
+        existing: NecessaryItem?,
+        titleInput: String,
+        amountInput: String,
+        dueDayInput: String,
+        dueDateInput: String,
+        recurrence: NecessaryItemRecurrence,
+        status: NecessaryItemStatus,
+        isNotificationEnabled: Boolean
+    ) {
+        val title = titleInput.trim()
+        val amount = amountInput.takeIf { it.isNotBlank() }?.toMoneyOrNull()
+        val dueDay = dueDayInput.trim().toIntOrNull()
+        val dueDate = dueDateInput.takeIf { it.isNotBlank() }?.let { FinanceDates.parseDateInput(it) }
+        val validationError = when {
+            title.isBlank() -> "Enter a necessary item title."
+            amountInput.isNotBlank() && (amount == null || amount < 0.0) ->
+                "Enter a valid necessary item amount."
+            recurrence == NecessaryItemRecurrence.MONTHLY && (dueDay == null || dueDay !in 1..31) ->
+                "Enter a due day from 1 to 31."
+            recurrence == NecessaryItemRecurrence.ONE_TIME && dueDate == null ->
+                "Enter a due date as YYYY-MM-DD."
+            else -> null
+        }
+
+        if (validationError != null) {
+            _uiState.update { it.copy(errorMessage = validationError) }
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        val item = NecessaryItem(
+            id = existing?.id ?: UUID.randomUUID().toString(),
+            title = title,
+            amount = amount,
+            dueDayOfMonth = dueDay ?: existing?.dueDayOfMonth ?: 1,
+            dueDateMillis = dueDate,
+            recurrence = recurrence,
+            status = status,
+            isNotificationEnabled = isNotificationEnabled,
+            createdAtMillis = existing?.createdAtMillis?.takeIf { it > 0L } ?: now,
+            updatedAtMillis = now
+        )
+
+        runSave { financeRepository.upsertNecessaryItem(item) }
+    }
+
+    fun updateNecessaryItemStatus(item: NecessaryItem, status: NecessaryItemStatus) {
+        runSave {
+            financeRepository.upsertNecessaryItem(
+                item.copy(
+                    status = status,
+                    updatedAtMillis = System.currentTimeMillis()
+                )
+            )
+        }
+    }
+
+    fun deleteNecessaryItem(itemId: String) {
+        runSave { financeRepository.deleteNecessaryItem(itemId) }
+    }
+
     private suspend fun saveSavingsContribution(
         amount: Double,
         currency: String,
@@ -569,7 +748,10 @@ class FinanceViewModel(
                         updatedAtMillis = now
                     )
                 )
-                return SaveResult.Saved("Saved successfully.")
+                return SaveResult.Saved(
+                    avoidWarningMessage(categoryId = categoryId.orEmpty(), necessity = necessity)
+                        ?: "Saved successfully."
+                )
             }
             ParsedBankMessageType.INCOME -> {
                 financeRepository.upsertIncomeTransaction(
@@ -937,6 +1119,15 @@ class FinanceViewModel(
             .filter { it.isNotBlank() }
             .ifEmpty { default }
 
+    private fun avoidWarningMessage(categoryId: String, necessity: NecessityLevel): String? {
+        if (!_uiState.value.data.reminderSettings.isAvoidCategoryWarningEnabled) return null
+        return if (necessity == NecessityLevel.AVOID || categoryId == FinanceDefaults.AVOID_CATEGORY_ID) {
+            "This was marked Avoid. Consider whether it was necessary."
+        } else {
+            null
+        }
+    }
+
     private fun savingsImportTransactionId(yearMonth: String): String =
         "bank-message-savings-$yearMonth"
 
@@ -975,12 +1166,13 @@ class FinanceViewModel(
             ?: "Niqdah could not save the finance update. Please try again."
 
     class Factory(
-        private val financeRepository: FinanceRepository
+        private val financeRepository: FinanceRepository,
+        private val reminderScheduler: DisciplineReminderScheduler? = null
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             if (modelClass.isAssignableFrom(FinanceViewModel::class.java)) {
-                return FinanceViewModel(financeRepository) as T
+                return FinanceViewModel(financeRepository, reminderScheduler) as T
             }
             throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
         }

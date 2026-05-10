@@ -18,15 +18,22 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,6 +49,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.MerchantRule
+import com.musab.niqdah.domain.finance.NecessaryItem
+import com.musab.niqdah.domain.finance.NecessaryItemRecurrence
+import com.musab.niqdah.domain.finance.NecessaryItemStatus
 
 @Composable
 fun SettingsScreen(
@@ -51,6 +61,10 @@ fun SettingsScreen(
     onUpdateProfileAndDebt: (String, String, String, String, String, String) -> Unit,
     onUpdateCategoryBudgets: (Map<String, String>) -> Unit,
     onUpdateBankMessageSettings: (Boolean, String, Boolean, String, Boolean, String, String, String, String, String, Boolean, Boolean, Int) -> Unit,
+    onUpdateReminderSettings: (Boolean, String, String, String, String, Boolean, String, String, String, Boolean, Boolean, String, String) -> Unit,
+    onSaveNecessaryItem: (NecessaryItem?, String, String, String, String, NecessaryItemRecurrence, NecessaryItemStatus, Boolean) -> Unit,
+    onUpdateNecessaryItemStatus: (NecessaryItem, NecessaryItemStatus) -> Unit,
+    onDeleteNecessaryItem: (String) -> Unit,
     onLogout: () -> Unit,
     onClearError: () -> Unit
 ) {
@@ -83,6 +97,19 @@ fun SettingsScreen(
     var debitKeywords by remember { mutableStateOf("") }
     var creditKeywords by remember { mutableStateOf("") }
     var savingsTransferKeywords by remember { mutableStateOf("") }
+    var isMonthlySavingsReminderEnabled by remember { mutableStateOf(true) }
+    var monthlySavingsReminderDay by remember { mutableStateOf("1") }
+    var monthlySavingsReminderHour by remember { mutableStateOf("9") }
+    var monthlySavingsReminderMinute by remember { mutableStateOf("0") }
+    var reminderSavingsTarget by remember { mutableStateOf("1700") }
+    var isMissedSavingsReminderEnabled by remember { mutableStateOf(true) }
+    var missedSavingsCheckDay by remember { mutableStateOf("20") }
+    var missedSavingsReminderHour by remember { mutableStateOf("19") }
+    var missedSavingsReminderMinute by remember { mutableStateOf("0") }
+    var areOverspendingWarningsEnabled by remember { mutableStateOf(true) }
+    var isAvoidCategoryWarningEnabled by remember { mutableStateOf(true) }
+    var januaryTargetDate by remember { mutableStateOf("2027-01-01") }
+    var januaryFundTarget by remember { mutableStateOf("13600") }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -128,6 +155,23 @@ fun SettingsScreen(
         debitKeywords = settings.debitKeywords.joinToString(", ")
         creditKeywords = settings.creditKeywords.joinToString(", ")
         savingsTransferKeywords = settings.savingsTransferKeywords.joinToString(", ")
+    }
+
+    LaunchedEffect(uiState.data.reminderSettings) {
+        val settings = uiState.data.reminderSettings
+        isMonthlySavingsReminderEnabled = settings.isMonthlySavingsReminderEnabled
+        monthlySavingsReminderDay = settings.monthlySavingsReminderDay.toString()
+        monthlySavingsReminderHour = settings.monthlySavingsReminderHour.toString()
+        monthlySavingsReminderMinute = settings.monthlySavingsReminderMinute.toString()
+        reminderSavingsTarget = formatInputMoney(settings.monthlySavingsTargetAmount)
+        isMissedSavingsReminderEnabled = settings.isMissedSavingsReminderEnabled
+        missedSavingsCheckDay = settings.missedSavingsCheckDay.toString()
+        missedSavingsReminderHour = settings.missedSavingsReminderHour.toString()
+        missedSavingsReminderMinute = settings.missedSavingsReminderMinute.toString()
+        areOverspendingWarningsEnabled = settings.areOverspendingWarningsEnabled
+        isAvoidCategoryWarningEnabled = settings.isAvoidCategoryWarningEnabled
+        januaryTargetDate = settings.januaryTargetDate
+        januaryFundTarget = formatInputMoney(settings.januaryFundTargetAmount)
     }
 
     LazyColumn(
@@ -245,6 +289,76 @@ fun SettingsScreen(
                         internalTransferReminderThresholdMinutes
                     )
                 }
+            )
+        }
+        item {
+            ReminderSettingsCard(
+                isMonthlySavingsReminderEnabled = isMonthlySavingsReminderEnabled,
+                onMonthlySavingsReminderEnabledChange = { isMonthlySavingsReminderEnabled = it },
+                monthlySavingsReminderDay = monthlySavingsReminderDay,
+                onMonthlySavingsReminderDayChange = { value ->
+                    monthlySavingsReminderDay = value.filter { char -> char.isDigit() }.take(2)
+                },
+                monthlySavingsReminderHour = monthlySavingsReminderHour,
+                onMonthlySavingsReminderHourChange = { value ->
+                    monthlySavingsReminderHour = value.filter { char -> char.isDigit() }.take(2)
+                },
+                monthlySavingsReminderMinute = monthlySavingsReminderMinute,
+                onMonthlySavingsReminderMinuteChange = { value ->
+                    monthlySavingsReminderMinute = value.filter { char -> char.isDigit() }.take(2)
+                },
+                reminderSavingsTarget = reminderSavingsTarget,
+                onReminderSavingsTargetChange = { reminderSavingsTarget = it },
+                isMissedSavingsReminderEnabled = isMissedSavingsReminderEnabled,
+                onMissedSavingsReminderEnabledChange = { isMissedSavingsReminderEnabled = it },
+                missedSavingsCheckDay = missedSavingsCheckDay,
+                onMissedSavingsCheckDayChange = { value ->
+                    missedSavingsCheckDay = value.filter { char -> char.isDigit() }.take(2)
+                },
+                missedSavingsReminderHour = missedSavingsReminderHour,
+                onMissedSavingsReminderHourChange = { value ->
+                    missedSavingsReminderHour = value.filter { char -> char.isDigit() }.take(2)
+                },
+                missedSavingsReminderMinute = missedSavingsReminderMinute,
+                onMissedSavingsReminderMinuteChange = { value ->
+                    missedSavingsReminderMinute = value.filter { char -> char.isDigit() }.take(2)
+                },
+                areOverspendingWarningsEnabled = areOverspendingWarningsEnabled,
+                onOverspendingWarningsEnabledChange = { areOverspendingWarningsEnabled = it },
+                isAvoidCategoryWarningEnabled = isAvoidCategoryWarningEnabled,
+                onAvoidCategoryWarningEnabledChange = { isAvoidCategoryWarningEnabled = it },
+                januaryTargetDate = januaryTargetDate,
+                onJanuaryTargetDateChange = { januaryTargetDate = it },
+                januaryFundTarget = januaryFundTarget,
+                onJanuaryFundTargetChange = { januaryFundTarget = it },
+                isSaving = uiState.isSaving,
+                onSave = {
+                    onUpdateReminderSettings(
+                        isMonthlySavingsReminderEnabled,
+                        monthlySavingsReminderDay,
+                        monthlySavingsReminderHour,
+                        monthlySavingsReminderMinute,
+                        reminderSavingsTarget,
+                        isMissedSavingsReminderEnabled,
+                        missedSavingsCheckDay,
+                        missedSavingsReminderHour,
+                        missedSavingsReminderMinute,
+                        areOverspendingWarningsEnabled,
+                        isAvoidCategoryWarningEnabled,
+                        januaryTargetDate,
+                        januaryFundTarget
+                    )
+                }
+            )
+        }
+        item {
+            NecessaryItemsCard(
+                items = uiState.data.necessaryItems,
+                currency = uiState.data.profile.currency,
+                isSaving = uiState.isSaving,
+                onSaveNecessaryItem = onSaveNecessaryItem,
+                onUpdateNecessaryItemStatus = onUpdateNecessaryItemStatus,
+                onDeleteNecessaryItem = onDeleteNecessaryItem
             )
         }
         item {
@@ -578,6 +692,372 @@ private fun BankMessageSourcesCard(
 }
 
 @Composable
+private fun ReminderSettingsCard(
+    isMonthlySavingsReminderEnabled: Boolean,
+    onMonthlySavingsReminderEnabledChange: (Boolean) -> Unit,
+    monthlySavingsReminderDay: String,
+    onMonthlySavingsReminderDayChange: (String) -> Unit,
+    monthlySavingsReminderHour: String,
+    onMonthlySavingsReminderHourChange: (String) -> Unit,
+    monthlySavingsReminderMinute: String,
+    onMonthlySavingsReminderMinuteChange: (String) -> Unit,
+    reminderSavingsTarget: String,
+    onReminderSavingsTargetChange: (String) -> Unit,
+    isMissedSavingsReminderEnabled: Boolean,
+    onMissedSavingsReminderEnabledChange: (Boolean) -> Unit,
+    missedSavingsCheckDay: String,
+    onMissedSavingsCheckDayChange: (String) -> Unit,
+    missedSavingsReminderHour: String,
+    onMissedSavingsReminderHourChange: (String) -> Unit,
+    missedSavingsReminderMinute: String,
+    onMissedSavingsReminderMinuteChange: (String) -> Unit,
+    areOverspendingWarningsEnabled: Boolean,
+    onOverspendingWarningsEnabledChange: (Boolean) -> Unit,
+    isAvoidCategoryWarningEnabled: Boolean,
+    onAvoidCategoryWarningEnabledChange: (Boolean) -> Unit,
+    januaryTargetDate: String,
+    onJanuaryTargetDateChange: (String) -> Unit,
+    januaryFundTarget: String,
+    onJanuaryFundTargetChange: (String) -> Unit,
+    isSaving: Boolean,
+    onSave: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(text = "Reminder Settings", style = MaterialTheme.typography.titleMedium)
+            SourceToggleRow(
+                title = "Monthly savings transfer reminder",
+                isEnabled = isMonthlySavingsReminderEnabled,
+                onEnabledChange = onMonthlySavingsReminderEnabledChange
+            )
+            MoneyField(
+                label = "Monthly savings target",
+                value = reminderSavingsTarget,
+                onValueChange = onReminderSavingsTargetChange
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NumberField(
+                    modifier = Modifier.weight(1f),
+                    label = "Day",
+                    value = monthlySavingsReminderDay,
+                    onValueChange = onMonthlySavingsReminderDayChange
+                )
+                NumberField(
+                    modifier = Modifier.weight(1f),
+                    label = "Hour",
+                    value = monthlySavingsReminderHour,
+                    onValueChange = onMonthlySavingsReminderHourChange
+                )
+                NumberField(
+                    modifier = Modifier.weight(1f),
+                    label = "Minute",
+                    value = monthlySavingsReminderMinute,
+                    onValueChange = onMonthlySavingsReminderMinuteChange
+                )
+            }
+            SourceToggleRow(
+                title = "Missed savings reminder",
+                isEnabled = isMissedSavingsReminderEnabled,
+                onEnabledChange = onMissedSavingsReminderEnabledChange
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NumberField(
+                    modifier = Modifier.weight(1f),
+                    label = "Check day",
+                    value = missedSavingsCheckDay,
+                    onValueChange = onMissedSavingsCheckDayChange
+                )
+                NumberField(
+                    modifier = Modifier.weight(1f),
+                    label = "Hour",
+                    value = missedSavingsReminderHour,
+                    onValueChange = onMissedSavingsReminderHourChange
+                )
+                NumberField(
+                    modifier = Modifier.weight(1f),
+                    label = "Minute",
+                    value = missedSavingsReminderMinute,
+                    onValueChange = onMissedSavingsReminderMinuteChange
+                )
+            }
+            SourceToggleRow(
+                title = "Overspending warnings",
+                isEnabled = areOverspendingWarningsEnabled,
+                onEnabledChange = onOverspendingWarningsEnabledChange
+            )
+            SourceToggleRow(
+                title = "Avoid-category warning",
+                isEnabled = isAvoidCategoryWarningEnabled,
+                onEnabledChange = onAvoidCategoryWarningEnabledChange
+            )
+            OutlinedTextField(
+                modifier = Modifier.fillMaxWidth(),
+                value = januaryTargetDate,
+                onValueChange = onJanuaryTargetDateChange,
+                label = { Text("January target date") },
+                supportingText = { Text("YYYY-MM-DD") },
+                singleLine = true
+            )
+            MoneyField(
+                label = "Total fund target",
+                value = januaryFundTarget,
+                onValueChange = onJanuaryFundTargetChange
+            )
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isSaving,
+                shape = MaterialTheme.shapes.medium,
+                onClick = onSave
+            ) {
+                Text(if (isSaving) "Saving..." else "Save reminders")
+            }
+        }
+    }
+}
+
+@Composable
+private fun NecessaryItemsCard(
+    items: List<NecessaryItem>,
+    currency: String,
+    isSaving: Boolean,
+    onSaveNecessaryItem: (NecessaryItem?, String, String, String, String, NecessaryItemRecurrence, NecessaryItemStatus, Boolean) -> Unit,
+    onUpdateNecessaryItemStatus: (NecessaryItem, NecessaryItemStatus) -> Unit,
+    onDeleteNecessaryItem: (String) -> Unit
+) {
+    var editingItem by remember { mutableStateOf<NecessaryItem?>(null) }
+    var isDialogOpen by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(text = "Necessary Items", style = MaterialTheme.typography.titleMedium)
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isSaving,
+                shape = MaterialTheme.shapes.medium,
+                onClick = {
+                    editingItem = null
+                    isDialogOpen = true
+                }
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Add,
+                    contentDescription = null,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Text("Add necessary item")
+            }
+            if (items.isEmpty()) {
+                Text(
+                    text = "No necessary reminders yet.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                items.forEach { item ->
+                    NecessaryItemRow(
+                        item = item,
+                        currency = currency,
+                        isSaving = isSaving,
+                        onEdit = {
+                            editingItem = item
+                            isDialogOpen = true
+                        },
+                        onStatusChange = { status -> onUpdateNecessaryItemStatus(item, status) },
+                        onDelete = { onDeleteNecessaryItem(item.id) }
+                    )
+                }
+            }
+        }
+    }
+
+    if (isDialogOpen) {
+        NecessaryItemDialog(
+            existing = editingItem,
+            currency = currency,
+            onDismiss = { isDialogOpen = false },
+            onSave = { existing, title, amount, dueDay, dueDate, recurrence, status, notifications ->
+                onSaveNecessaryItem(existing, title, amount, dueDay, dueDate, recurrence, status, notifications)
+                isDialogOpen = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun NecessaryItemRow(
+    item: NecessaryItem,
+    currency: String,
+    isSaving: Boolean,
+    onEdit: () -> Unit,
+    onStatusChange: (NecessaryItemStatus) -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = item.title, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = necessaryItemDueText(item),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    item.amount?.let {
+                        Text(
+                            text = formatMoney(it, currency),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+                Row {
+                    IconButton(onClick = onEdit, enabled = !isSaving) {
+                        Icon(imageVector = Icons.Rounded.Edit, contentDescription = "Edit necessary item")
+                    }
+                    IconButton(onClick = onDelete, enabled = !isSaving) {
+                        Icon(imageVector = Icons.Rounded.Delete, contentDescription = "Delete necessary item")
+                    }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NecessaryItemStatus.entries.forEach { status ->
+                    FilterChip(
+                        selected = item.status == status,
+                        onClick = { onStatusChange(status) },
+                        label = { Text(status.label) },
+                        enabled = !isSaving
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NecessaryItemDialog(
+    existing: NecessaryItem?,
+    currency: String,
+    onDismiss: () -> Unit,
+    onSave: (NecessaryItem?, String, String, String, String, NecessaryItemRecurrence, NecessaryItemStatus, Boolean) -> Unit
+) {
+    var title by remember(existing?.id) { mutableStateOf(existing?.title.orEmpty()) }
+    var amount by remember(existing?.id) {
+        mutableStateOf(existing?.amount?.let { formatInputMoney(it) }.orEmpty())
+    }
+    var dueDay by remember(existing?.id) {
+        mutableStateOf(existing?.dueDayOfMonth?.toString() ?: "1")
+    }
+    var dueDate by remember(existing?.id) {
+        mutableStateOf(existing?.dueDateMillis?.let { formatTransactionDate(it) }.orEmpty())
+    }
+    var recurrence by remember(existing?.id) {
+        mutableStateOf(existing?.recurrence ?: NecessaryItemRecurrence.MONTHLY)
+    }
+    var status by remember(existing?.id) {
+        mutableStateOf(existing?.status ?: NecessaryItemStatus.PENDING)
+    }
+    var notifications by remember(existing?.id) {
+        mutableStateOf(existing?.isNotificationEnabled ?: true)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "Add necessary item" else "Edit necessary item") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Title") },
+                    singleLine = true
+                )
+                MoneyField(label = "Amount ($currency, optional)", value = amount, onValueChange = { amount = it })
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NecessaryItemRecurrence.entries.forEach { option ->
+                        FilterChip(
+                            selected = recurrence == option,
+                            onClick = { recurrence = option },
+                            label = { Text(option.label) }
+                        )
+                    }
+                }
+                if (recurrence == NecessaryItemRecurrence.MONTHLY) {
+                    NumberField(
+                        label = "Due day",
+                        value = dueDay,
+                        onValueChange = { value -> dueDay = value.filter { char -> char.isDigit() }.take(2) }
+                    )
+                } else {
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = dueDate,
+                        onValueChange = { dueDate = it },
+                        label = { Text("Due date") },
+                        supportingText = { Text("YYYY-MM-DD") },
+                        singleLine = true
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    NecessaryItemStatus.entries.forEach { option ->
+                        FilterChip(
+                            selected = status == option,
+                            onClick = { status = option },
+                            label = { Text(option.label) }
+                        )
+                    }
+                }
+                SourceToggleRow(
+                    title = "Notification",
+                    isEnabled = notifications,
+                    onEnabledChange = { notifications = it }
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(existing, title, amount, dueDay, dueDate, recurrence, status, notifications)
+                }
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
 private fun SourceToggleRow(
     title: String,
     isEnabled: Boolean,
@@ -650,3 +1130,28 @@ private fun MoneyField(label: String, value: String, onValueChange: (String) -> 
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
     )
 }
+
+@Composable
+private fun NumberField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        modifier = modifier.fillMaxWidth(),
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+    )
+}
+
+private fun necessaryItemDueText(item: NecessaryItem): String =
+    when (item.recurrence) {
+        NecessaryItemRecurrence.MONTHLY -> "Monthly on day ${item.dueDayOfMonth}"
+        NecessaryItemRecurrence.ONE_TIME -> item.dueDateMillis
+            ?.let { "Due ${formatTransactionDate(it)}" }
+            ?: "One-time"
+    } + if (item.isNotificationEnabled) " - notification on" else " - notification off"

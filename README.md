@@ -2,7 +2,7 @@
 
 Niqdah is a personal Android finance app for disciplined budgeting and wedding preparation, built with Kotlin, Jetpack Compose, Material 3, Firebase Auth, Firestore, and Firebase Cloud Functions.
 
-Phase 4C includes email/password auth, a manual finance engine, dashboard calculations, transaction tracking, savings envelopes, debt tracking, editable settings, persistent Firestore data under each authenticated user, a secure AI Chat backend, manual bank message import, review-first incoming SMS import for selected bank senders, account balance tracking, and rich pending-import notification actions.
+Phase 5 includes email/password auth, a manual finance engine, dashboard calculations, transaction tracking, savings envelopes, debt tracking, editable settings, persistent Firestore data under each authenticated user, a secure AI Chat backend, manual bank message import, review-first incoming SMS import for selected bank senders, account balance tracking, rich pending-import notification actions, and personal financial discipline reminders.
 
 ## Tech Stack
 
@@ -84,7 +84,7 @@ AI Chat screen
   -> OpenAI Responses API
 ```
 
-Payload sent to the backend includes the user message, in-session chat history, and a trimmed finance context: profile income, savings target, debt tracker, current month snapshot, category budgets, savings goals, and recent transactions.
+Payload sent to the backend includes the user message, in-session chat history, and a trimmed finance context: profile income, savings target, debt tracker, current month snapshot, category budgets, savings goals, discipline status, necessary items due, January countdown, and recent transactions.
 
 ## Firestore Data Shape
 
@@ -94,6 +94,7 @@ Niqdah stores finance data under the authenticated Firebase user UID:
 users/{uid}/finance/profile
 users/{uid}/finance/debt
 users/{uid}/finance/bankMessageSettings
+users/{uid}/finance/reminderSettings
 users/{uid}/budgetCategories/{categoryId}
 users/{uid}/transactions/{transactionId}
 users/{uid}/incomeTransactions/{transactionId}
@@ -101,6 +102,7 @@ users/{uid}/pendingBankImports/{importHash}
 users/{uid}/bankMessageImportHistory/{importHash}
 users/{uid}/accountBalanceSnapshots/{accountKind-importHash}
 users/{uid}/savingsGoals/{goalId}
+users/{uid}/necessaryItems/{necessaryItemId}
 users/{uid}/monthlySnapshots/{yearMonth}
 ```
 
@@ -154,6 +156,22 @@ Pending import notifications now show parsed financial summaries only, never the
 - Dismiss marks the pending import dismissed and removes it from the pending list.
 
 Android 13+ devices also request `POST_NOTIFICATIONS` when automatic SMS import is enabled so review notifications and confirmation notifications can appear. The app still does not request `READ_SMS`, does not send SMS content to OpenAI, does not let the backend read SMS, and does not auto-save raw SMS without user action.
+
+## Phase 5 Discipline Reminders
+
+Phase 5 adds local, gentle financial discipline reminders and dashboard guidance:
+
+- Monthly marriage savings transfer reminder, defaulting to "Remember to move AED 1,700 to your marriage savings fund."
+- Missed savings reminder after a configured day if the current month is short of the target.
+- Category budget warnings at 75%, 100%, and over 100% for variable spending categories.
+- Avoid-category save warning: "This was marked Avoid. Consider whether it was necessary."
+- Necessary recurring items list for rent, savings transfer, debt payment, medical appointments, dental/braces, and groceries basics.
+- Dashboard discipline card with savings status, categories near limit, due necessary items, avoid spending this month, and safe-to-spend.
+- January target countdown with editable target date and fund amount.
+
+Reminder Settings controls live in Settings. WorkManager schedules Android-friendly local checks for monthly savings, missed savings, overspending, and necessary items. Notifications are posted only if `POST_NOTIFICATIONS` is already granted; Phase 5 does not add another notification permission prompt. Reminder wording is practical and non-shaming.
+
+Privacy posture remains the same: no `READ_SMS`, no SMS content sent to OpenAI, no OpenAI API key in the Android app, and no backend SMS access. AI Chat receives discipline summaries such as savings progress, overspent categories, due necessary items, safe-to-spend, and January countdown status. It cannot create reminders or write data; the Android UI must present any saveable action for review.
 
 ## Open And Run In Android Studio
 
@@ -215,17 +233,18 @@ Included:
 - Experimental incoming SMS bank import with pending review drafts
 - Account balance snapshots for daily-use and savings bank messages
 - Save, Edit, and Dismiss notification actions for pending bank import drafts
+- Monthly savings reminders, missed savings reminders, overspending warnings, avoid warnings, necessary item reminders, and January countdown
 - Daily-use and savings bank message source settings
 - Rule-based category suggestions for pasted bank messages
 - Imported income records from credit messages
 - Marriage fund and wedding-preparation envelopes
 - Debt tracker and debt payment updates
-- Dashboard calculations for income, spending, safe-to-spend, savings, debt, overspending alerts, and health summary
+- Dashboard calculations for income, spending, safe-to-spend, savings, debt, overspending alerts, discipline status, January countdown, and health summary
 - Dashboard and Settings latest balance status fields
 - Firestore persistence under `users/{uid}`
 - AI Chat with in-session history
 - Secure Cloud Function backend for OpenAI Responses API
-- Finance context sent to backend for disciplined purchase and budget guidance
+- Finance context sent to backend for disciplined purchase, reminder-aware, and budget guidance
 
 Not included yet:
 

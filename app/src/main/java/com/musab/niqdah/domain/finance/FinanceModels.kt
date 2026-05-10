@@ -97,7 +97,9 @@ data class FinanceData(
     val merchantRules: List<MerchantRule>,
     val goals: List<SavingsGoal>,
     val debt: DebtTracker,
-    val bankMessageSettings: BankMessageParserSettings
+    val bankMessageSettings: BankMessageParserSettings,
+    val reminderSettings: ReminderSettings = FinanceDefaults.reminderSettings(),
+    val necessaryItems: List<NecessaryItem> = emptyList()
 ) {
     val latestDailyUseBalance: AccountBalanceSnapshot?
         get() = latestBalance(AccountKind.DAILY_USE)
@@ -129,9 +131,52 @@ data class FinanceData(
                 merchantRules = emptyList(),
                 goals = emptyList(),
                 debt = FinanceDefaults.debtTracker(),
-                bankMessageSettings = FinanceDefaults.bankMessageParserSettings()
+                bankMessageSettings = FinanceDefaults.bankMessageParserSettings(),
+                reminderSettings = FinanceDefaults.reminderSettings(),
+                necessaryItems = emptyList()
             )
     }
+}
+
+data class ReminderSettings(
+    val isMonthlySavingsReminderEnabled: Boolean = true,
+    val monthlySavingsReminderDay: Int = 1,
+    val monthlySavingsReminderHour: Int = 9,
+    val monthlySavingsReminderMinute: Int = 0,
+    val monthlySavingsTargetAmount: Double = 1700.0,
+    val isMissedSavingsReminderEnabled: Boolean = true,
+    val missedSavingsCheckDay: Int = 20,
+    val missedSavingsReminderHour: Int = 19,
+    val missedSavingsReminderMinute: Int = 0,
+    val areOverspendingWarningsEnabled: Boolean = true,
+    val isAvoidCategoryWarningEnabled: Boolean = true,
+    val januaryTargetDate: String = "2027-01-01",
+    val januaryFundTargetAmount: Double = 13600.0,
+    val updatedAtMillis: Long = 0L
+)
+
+data class NecessaryItem(
+    val id: String,
+    val title: String,
+    val amount: Double? = null,
+    val dueDayOfMonth: Int = 1,
+    val dueDateMillis: Long? = null,
+    val recurrence: NecessaryItemRecurrence = NecessaryItemRecurrence.MONTHLY,
+    val status: NecessaryItemStatus = NecessaryItemStatus.PENDING,
+    val isNotificationEnabled: Boolean = true,
+    val createdAtMillis: Long = 0L,
+    val updatedAtMillis: Long = 0L
+)
+
+enum class NecessaryItemRecurrence(val label: String) {
+    MONTHLY("Monthly"),
+    ONE_TIME("One-time")
+}
+
+enum class NecessaryItemStatus(val label: String) {
+    PENDING("Pending"),
+    DONE("Done"),
+    SKIPPED("Skipped")
 }
 
 enum class AccountKind(val label: String) {
@@ -321,6 +366,76 @@ data class CategorySpend(
     val isOverspent: Boolean
 )
 
+data class SavingsTargetStatus(
+    val targetAmount: Double,
+    val savedThisMonth: Double,
+    val shortfall: Double,
+    val progress: Double
+)
+
+data class CategoryBudgetWarning(
+    val category: BudgetCategory,
+    val spent: Double,
+    val budget: Double,
+    val percentUsed: Double,
+    val level: CategoryBudgetWarningLevel,
+    val message: String
+)
+
+enum class CategoryBudgetWarningLevel {
+    NEAR_LIMIT,
+    AT_LIMIT,
+    OVER_LIMIT
+}
+
+data class NecessaryItemDue(
+    val item: NecessaryItem,
+    val dueDateMillis: Long,
+    val daysUntilDue: Long
+)
+
+data class JanuaryCountdownStatus(
+    val targetDate: String,
+    val daysRemaining: Long,
+    val monthsRemaining: Long,
+    val currentSaved: Double,
+    val targetAmount: Double,
+    val requiredMonthlySavings: Double
+)
+
+data class DisciplineStatus(
+    val savingsTarget: SavingsTargetStatus,
+    val categoryWarnings: List<CategoryBudgetWarning>,
+    val necessaryItemsDueSoon: List<NecessaryItemDue>,
+    val avoidSpendingThisMonth: Double,
+    val safeToSpendAmount: Double,
+    val januaryCountdown: JanuaryCountdownStatus
+) {
+    companion object {
+        fun empty(): DisciplineStatus =
+            DisciplineStatus(
+                savingsTarget = SavingsTargetStatus(
+                    targetAmount = 0.0,
+                    savedThisMonth = 0.0,
+                    shortfall = 0.0,
+                    progress = 0.0
+                ),
+                categoryWarnings = emptyList(),
+                necessaryItemsDueSoon = emptyList(),
+                avoidSpendingThisMonth = 0.0,
+                safeToSpendAmount = 0.0,
+                januaryCountdown = JanuaryCountdownStatus(
+                    targetDate = "2027-01-01",
+                    daysRemaining = 0L,
+                    monthsRemaining = 0L,
+                    currentSaved = 0.0,
+                    targetAmount = 0.0,
+                    requiredMonthlySavings = 0.0
+                )
+            )
+    }
+}
+
 data class DashboardMetrics(
     val totalMonthlyIncome: Double,
     val totalSpent: Double,
@@ -332,5 +447,6 @@ data class DashboardMetrics(
     val categorySpending: List<CategorySpend>,
     val overspendingAlerts: List<CategorySpend>,
     val healthSummary: String,
-    val snapshot: MonthlySnapshot
+    val snapshot: MonthlySnapshot,
+    val disciplineStatus: DisciplineStatus = DisciplineStatus.empty()
 )

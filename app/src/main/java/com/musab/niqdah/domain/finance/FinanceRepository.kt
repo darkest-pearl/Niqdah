@@ -20,5 +20,8 @@ interface FinanceRepository {
     suspend fun upsertGoal(goal: SavingsGoal)
     suspend fun upsertDebt(debt: DebtTracker)
     suspend fun upsertBankMessageSettings(settings: BankMessageParserSettings)
+    suspend fun upsertReminderSettings(settings: ReminderSettings)
+    suspend fun upsertNecessaryItem(item: NecessaryItem)
+    suspend fun deleteNecessaryItem(itemId: String)
     suspend fun saveMonthlySnapshot(snapshot: MonthlySnapshot)
 }

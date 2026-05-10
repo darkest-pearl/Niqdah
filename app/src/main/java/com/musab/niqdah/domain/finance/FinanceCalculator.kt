@@ -7,6 +7,8 @@ object FinanceCalculator {
         val monthTransactions = data.transactions.filter { it.yearMonth == yearMonth }
         val monthIncomeTransactions = data.incomeTransactions.filter { it.yearMonth == yearMonth }
         val categoryById = data.categories.associateBy { it.id }
+        val disciplineStatus = DisciplineCalculator.status(data, yearMonth, now)
+        val monthlySavingsTarget = disciplineStatus.savingsTarget.targetAmount
         val totalIncome = data.profile.salary + data.profile.extraIncome + monthIncomeTransactions.sumOf { it.amount }
         val totalSpent = monthTransactions
             .filter { transaction -> categoryById[transaction.categoryId]?.type != CategoryType.SAVINGS }
@@ -31,12 +33,14 @@ object FinanceCalculator {
         val remainingSafeToSpend = totalIncome -
             totalSpent -
             fixedReserveRemaining -
-            data.profile.monthlySavingsTarget -
+            monthlySavingsTarget -
             data.debt.monthlyAutoReduction
 
         val marriageGoal = data.goals.firstOrNull { it.id == FinanceDefaults.MARRIAGE_GOAL_ID }
         val marriageSaved = marriageGoal?.savedAmount ?: 0.0
-        val marriageTarget = marriageGoal?.targetAmount ?: 13600.0
+        val marriageTarget = data.reminderSettings.januaryFundTargetAmount.takeIf { it > 0.0 }
+            ?: marriageGoal?.targetAmount
+            ?: FinanceDefaults.DEFAULT_MARRIAGE_FUND_TARGET
         val savingsThisMonth = monthTransactions
             .filter { transaction -> categoryById[transaction.categoryId]?.type == CategoryType.SAVINGS }
             .sumOf { it.amount }
@@ -47,7 +51,7 @@ object FinanceCalculator {
         val healthSummary = buildHealthSummary(
             safeToSpend = remainingSafeToSpend,
             overspendingAlerts = overspendingAlerts,
-            savingsProgress = ratio(savingsThisMonth, data.profile.monthlySavingsTarget)
+            savingsProgress = ratio(savingsThisMonth, monthlySavingsTarget)
         )
 
         val snapshot = MonthlySnapshot(
@@ -69,12 +73,13 @@ object FinanceCalculator {
             fixedReserveRemaining = fixedReserveRemaining,
             remainingSafeToSpend = remainingSafeToSpend,
             marriageFundProgress = ratio(marriageSaved, marriageTarget),
-            savingsTargetProgress = ratio(savingsThisMonth, data.profile.monthlySavingsTarget),
+            savingsTargetProgress = ratio(savingsThisMonth, monthlySavingsTarget),
             debtProgress = debtProgress,
             categorySpending = categorySpending,
             overspendingAlerts = overspendingAlerts,
             healthSummary = healthSummary,
-            snapshot = snapshot
+            snapshot = snapshot,
+            disciplineStatus = disciplineStatus.copy(safeToSpendAmount = remainingSafeToSpend)
         )
     }
 
