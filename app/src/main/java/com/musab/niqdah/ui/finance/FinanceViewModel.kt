@@ -28,6 +28,8 @@ import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.NecessaryItem
 import com.musab.niqdah.domain.finance.NecessaryItemRecurrence
 import com.musab.niqdah.domain.finance.NecessaryItemStatus
+import com.musab.niqdah.domain.finance.OnboardingPlanner
+import com.musab.niqdah.domain.finance.OnboardingState
 import com.musab.niqdah.domain.finance.ParsedBankMessage
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
@@ -52,6 +54,12 @@ data class FinanceUiState(
     val selectedTransactionMonth: String = FinanceDates.currentYearMonth(),
     val selectedTransactionCategoryId: String? = null
 ) {
+    val requiresOnboarding: Boolean
+        get() = !isLoading && OnboardingPlanner.requiresOnboarding(data)
+
+    val hasExistingPlanForMigration: Boolean
+        get() = OnboardingPlanner.hasExistingPlan(data)
+
     val filteredTransactions: List<ExpenseTransaction>
         get() = data.transactions.filter { transaction ->
             transaction.yearMonth == selectedTransactionMonth &&
@@ -133,6 +141,30 @@ class FinanceViewModel(
 
     fun clearError() {
         _uiState.update { it.copy(errorMessage = null, statusMessage = null) }
+    }
+
+    fun completeOnboarding(onboardingState: OnboardingState) {
+        val uid = _uiState.value.data.profile.uid
+        if (uid.isBlank()) {
+            showValidationError("Your signed-in profile is still loading. Try again in a moment.")
+            return
+        }
+        val plan = OnboardingPlanner.buildPlan(uid = uid, state = onboardingState)
+        runSave { financeRepository.saveOnboardingPlan(plan) }
+    }
+
+    fun keepExistingPlan() {
+        val now = System.currentTimeMillis()
+        val current = _uiState.value.data
+        runSave {
+            financeRepository.upsertProfile(
+                current.profile.copy(
+                    onboardingCompleted = true,
+                    primaryGoalId = current.primaryGoal?.id.orEmpty(),
+                    updatedAtMillis = now
+                )
+            )
+        }
     }
 
     fun saveTransaction(
@@ -563,9 +595,9 @@ class FinanceViewModel(
                 "Enter a missed savings reminder hour from 0 to 23."
             missedSavingsReminderMinute == null || missedSavingsReminderMinute !in 0..59 ->
                 "Enter a missed savings reminder minute from 0 to 59."
-            januaryTargetDate == null -> "Enter the January target date as YYYY-MM-DD."
+            januaryTargetDate == null -> "Enter the goal target date as YYYY-MM-DD."
             januaryFundTargetAmount == null || januaryFundTargetAmount < 0.0 ->
-                "Enter a valid January fund target."
+                "Enter a valid goal fund target."
             else -> null
         }
 
@@ -604,7 +636,10 @@ class FinanceViewModel(
                 )
             )
             current.categories
-                .firstOrNull { it.id == FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID }
+                .firstOrNull {
+                    it.id == FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID ||
+                        it.id == FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID
+                }
                 ?.let { category ->
                     financeRepository.upsertCategory(
                         category.copy(
@@ -614,7 +649,9 @@ class FinanceViewModel(
                     )
                 }
             current.goals
-                .firstOrNull { it.id == FinanceDefaults.MARRIAGE_GOAL_ID }
+                .firstOrNull { it.isPrimary }
+                ?: current.goals.firstOrNull { it.id == current.profile.primaryGoalId }
+                ?: current.goals.firstOrNull { it.id == FinanceDefaults.MARRIAGE_GOAL_ID }
                 ?.let { goal ->
                     financeRepository.upsertGoal(
                         goal.copy(
@@ -703,7 +740,8 @@ class FinanceViewModel(
         financeRepository.upsertTransaction(
             ExpenseTransaction(
                 id = existingContribution?.id ?: savingsImportTransactionId(yearMonth),
-                categoryId = FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID,
+                categoryId = state.data.categories.firstOrNull { it.type == com.musab.niqdah.domain.finance.CategoryType.SAVINGS }?.id
+                    ?: FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID,
                 amount = (existingContribution?.amount ?: 0.0) + amount,
                 currency = currency,
                 note = description.trim().ifBlank { "Imported savings transfer" },
@@ -715,14 +753,15 @@ class FinanceViewModel(
             )
         )
 
-        val marriageGoal = state.data.goals.firstOrNull { it.id == FinanceDefaults.MARRIAGE_GOAL_ID }
-            ?: FinanceDefaults.savingsGoals(now).first { it.id == FinanceDefaults.MARRIAGE_GOAL_ID }
-        financeRepository.upsertGoal(
-            marriageGoal.copy(
-                savedAmount = marriageGoal.savedAmount + amount,
-                updatedAtMillis = now
+        val primaryGoal = state.data.primaryGoal
+        if (primaryGoal != null) {
+            financeRepository.upsertGoal(
+                primaryGoal.copy(
+                    savedAmount = primaryGoal.savedAmount + amount,
+                    updatedAtMillis = now
+                )
             )
-        )
+        }
     }
 
     private suspend fun writeImportedFinanceAction(

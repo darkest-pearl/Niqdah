@@ -51,8 +51,17 @@ class DisciplineCalculatorTest {
     fun safeToSpendSubtractsSavingsTargetAndFixedReserve() {
         val occurredAt = FinanceDates.parseDateInput("2026-05-10") ?: error("Invalid test date")
         val data = FinanceData.empty(uid = "uid").copy(
-            profile = FinanceDefaults.userProfile(uid = "uid", now = 0L),
-            categories = FinanceDefaults.budgetCategories(now = 0L),
+            profile = FinanceDefaults.userProfile(uid = "uid", now = 0L).copy(
+                salary = 5_000.0,
+                onboardingCompleted = true
+            ),
+            categories = FinanceDefaults.budgetCategories(now = 0L).map { category ->
+                if (category.id == FinanceDefaults.RENT_CATEGORY_ID) {
+                    category.copy(monthlyBudget = 1_300.0)
+                } else {
+                    category
+                }
+            },
             transactions = listOf(
                 ExpenseTransaction(
                     id = "food",

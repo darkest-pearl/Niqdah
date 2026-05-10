@@ -5,7 +5,9 @@ import kotlinx.coroutines.flow.Flow
 interface FinanceRepository {
     suspend fun ensureDefaults()
     fun observeFinanceData(): Flow<FinanceData>
+    suspend fun saveOnboardingPlan(plan: OnboardingPlan)
     suspend fun upsertProfile(profile: UserProfile)
+    suspend fun upsertUserFinancialProfile(profile: UserFinancialProfile)
     suspend fun upsertCategory(category: BudgetCategory)
     suspend fun upsertTransaction(transaction: ExpenseTransaction)
     suspend fun deleteTransaction(transactionId: String)

@@ -23,7 +23,7 @@ data class AiChatUiState(
         AiChatMessage(
             id = "welcome",
             role = AiChatRole.ASSISTANT,
-            content = "Ask me if a purchase fits the January marriage plan, or ask for a quick budget adjustment."
+            content = "Ask me if a purchase fits your plan, or ask what to focus on this month."
         )
     ),
     val draftActions: Map<String, AiFinanceDraftAction> = emptyMap(),

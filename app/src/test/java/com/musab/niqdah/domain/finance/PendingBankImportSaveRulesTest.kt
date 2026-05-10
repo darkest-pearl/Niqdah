@@ -67,7 +67,7 @@ class PendingBankImportSaveRulesTest {
         val pending = creditPendingImport()
 
         assertEquals(ParsedBankMessageType.SAVINGS_TRANSFER, pending.type)
-        assertEquals(FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID, pending.suggestedCategoryId)
+        assertEquals(FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID, pending.suggestedCategoryId)
         assertNull(PendingBankImportSaveRules.validate(pending))
     }
 
@@ -86,7 +86,7 @@ class PendingBankImportSaveRulesTest {
         )
         val savingsContribution = ExpenseTransaction(
             id = "bank-message-savings-2027-01",
-            categoryId = FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID,
+            categoryId = FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID,
             amount = 1_000.0,
             currency = "AED",
             occurredAtMillis = occurredAt,
@@ -162,7 +162,7 @@ class PendingBankImportSaveRulesTest {
             transactions = listOf(
                 ExpenseTransaction(
                     id = "bank-message-savings-2027-01",
-                    categoryId = FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID,
+                    categoryId = FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID,
                     amount = 1_000.0,
                     currency = "AED",
                     occurredAtMillis = occurredAt,
@@ -219,7 +219,12 @@ class PendingBankImportSaveRulesTest {
         internalTransferRecords: List<InternalTransferRecord>
     ): DashboardMetrics {
         val data = FinanceData(
-            profile = FinanceDefaults.userProfile(uid = "uid", now = 0L),
+            profile = FinanceDefaults.userProfile(uid = "uid", now = 0L).copy(
+                salary = 5_000.0,
+                extraIncome = 500.0,
+                monthlySavingsTarget = 1_700.0,
+                onboardingCompleted = true
+            ),
             categories = categories,
             transactions = transactions,
             incomeTransactions = incomeTransactions,
@@ -229,7 +234,10 @@ class PendingBankImportSaveRulesTest {
             merchantRules = emptyList(),
             goals = FinanceDefaults.savingsGoals(now = 0L),
             debt = FinanceDefaults.debtTracker(now = 0L),
-            bankMessageSettings = settings
+            bankMessageSettings = settings,
+            reminderSettings = FinanceDefaults.reminderSettings(now = 0L).copy(
+                monthlySavingsTargetAmount = 1_700.0
+            )
         )
         return FinanceCalculator.dashboard(
             data = data,

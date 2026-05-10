@@ -17,6 +17,10 @@ import com.musab.niqdah.domain.finance.BankMessageSourceSettings
 import com.musab.niqdah.domain.finance.BankMessageSourceType
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.CategoryType
+import com.musab.niqdah.domain.finance.CategoryBudgetSetup
+import com.musab.niqdah.domain.finance.DebtLenderType
+import com.musab.niqdah.domain.finance.DebtPressureLevel
+import com.musab.niqdah.domain.finance.DebtProfile
 import com.musab.niqdah.domain.finance.DebtTracker
 import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.FinanceData
@@ -33,11 +37,17 @@ import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.NecessaryItem
 import com.musab.niqdah.domain.finance.NecessaryItemRecurrence
 import com.musab.niqdah.domain.finance.NecessaryItemStatus
+import com.musab.niqdah.domain.finance.FixedExpense
+import com.musab.niqdah.domain.finance.GoalPurpose
+import com.musab.niqdah.domain.finance.OnboardingPlan
 import com.musab.niqdah.domain.finance.ParsedBankMessageConfidence
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
+import com.musab.niqdah.domain.finance.PrimarySavingsGoal
 import com.musab.niqdah.domain.finance.ReminderSettings
 import com.musab.niqdah.domain.finance.SavingsGoal
+import com.musab.niqdah.domain.finance.UserFinancialProfile
+import com.musab.niqdah.domain.finance.UserPreferenceSetup
 import com.musab.niqdah.domain.finance.UserProfile
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -63,26 +73,6 @@ class FirebaseFinanceRepository(
             profileDocument(db).set(FinanceDefaults.userProfile(uid, now).toFirestore()).awaitValue()
         }
 
-        val existingCategoryIds = categoriesCollection(db).get().awaitValue()
-            .documents
-            .map { it.id }
-            .toSet()
-        FinanceDefaults.budgetCategories(now)
-            .filterNot { it.id in existingCategoryIds }
-            .forEach { category ->
-                categoriesCollection(db).document(category.id).set(category.toFirestore()).awaitValue()
-            }
-
-        if (goalsCollection(db).get().awaitValue().isEmpty) {
-            FinanceDefaults.savingsGoals(now).forEach { goal ->
-                goalsCollection(db).document(goal.id).set(goal.toFirestore()).awaitValue()
-            }
-        }
-
-        if (!debtDocument(db).get().awaitValue().exists()) {
-            debtDocument(db).set(FinanceDefaults.debtTracker(now).toFirestore()).awaitValue()
-        }
-
         if (!bankMessageSettingsDocument(db).get().awaitValue().exists()) {
             bankMessageSettingsDocument(db)
                 .set(FinanceDefaults.bankMessageParserSettings().toFirestore())
@@ -94,27 +84,29 @@ class FirebaseFinanceRepository(
                 .set(FinanceDefaults.reminderSettings(now).toFirestore())
                 .awaitValue()
         }
-
-        if (necessaryItemsCollection(db).get().awaitValue().isEmpty) {
-            FinanceDefaults.necessaryItems(now).forEach { item ->
-                necessaryItemsCollection(db).document(item.id).set(item.toFirestore()).awaitValue()
-            }
-        }
     }
 
     override fun observeFinanceData(): Flow<FinanceData> {
         val db = firestore ?: return flowOf(FinanceData.empty(uid))
 
-        val coreFlow = combine(
+        val profileFlow = combine(
             observeProfile(db),
+            observeUserFinancialProfile(db)
+        ) { profile, financialProfile ->
+            ProfileCore(profile = profile, financialProfile = financialProfile)
+        }
+
+        val coreFlow = combine(
+            profileFlow,
             observeCategories(db),
             observeTransactions(db),
             observeIncomeTransactions(db),
             observePendingBankImports(db)
-        ) { profile, categories, transactions, incomeTransactions, pendingBankImports ->
+        ) { profileCore, categories, transactions, incomeTransactions, pendingBankImports ->
             FinanceCore(
-                profile = profile,
-                categories = categories.ifEmpty { FinanceDefaults.budgetCategories() },
+                profile = profileCore.profile,
+                financialProfile = profileCore.financialProfile,
+                categories = categories,
                 transactions = transactions,
                 incomeTransactions = incomeTransactions,
                 pendingBankImports = pendingBankImports
@@ -154,6 +146,7 @@ class FirebaseFinanceRepository(
         ) { core, goals, debt, bankExtras, disciplineExtras ->
             FinanceData(
                 profile = core.profile,
+                financialProfile = core.financialProfile,
                 categories = core.categories,
                 transactions = core.transactions,
                 incomeTransactions = core.incomeTransactions,
@@ -161,17 +154,39 @@ class FirebaseFinanceRepository(
                 accountBalanceSnapshots = bankExtras.accountBalanceSnapshots,
                 internalTransferRecords = bankExtras.internalTransferRecords,
                 merchantRules = bankExtras.merchantRules,
-                goals = goals.ifEmpty { FinanceDefaults.savingsGoals() },
+                goals = goals,
                 debt = debt,
                 bankMessageSettings = bankExtras.bankMessageSettings,
                 reminderSettings = disciplineExtras.reminderSettings,
-                necessaryItems = disciplineExtras.necessaryItems.ifEmpty { FinanceDefaults.necessaryItems() }
+                necessaryItems = disciplineExtras.necessaryItems
             )
+        }
+    }
+
+    override suspend fun saveOnboardingPlan(plan: OnboardingPlan) {
+        val db = requireFirestore()
+        profileDocument(db).set(plan.profile.toFirestore()).awaitValue()
+        userFinancialProfileDocument(db).set(plan.financialProfile.toFirestore()).awaitValue()
+        plan.categories.forEach { category ->
+            categoriesCollection(db).document(category.id).set(category.toFirestore()).awaitValue()
+        }
+        plan.goals.forEach { goal ->
+            goalsCollection(db).document(goal.id).set(goal.toFirestore()).awaitValue()
+        }
+        debtDocument(db).set(plan.debt.toFirestore()).awaitValue()
+        bankMessageSettingsDocument(db).set(plan.bankMessageSettings.toFirestore()).awaitValue()
+        reminderSettingsDocument(db).set(plan.reminderSettings.toFirestore()).awaitValue()
+        plan.necessaryItems.forEach { item ->
+            necessaryItemsCollection(db).document(item.id).set(item.toFirestore()).awaitValue()
         }
     }
 
     override suspend fun upsertProfile(profile: UserProfile) {
         profileDocument(requireFirestore()).set(profile.toFirestore()).awaitValue()
+    }
+
+    override suspend fun upsertUserFinancialProfile(profile: UserFinancialProfile) {
+        userFinancialProfileDocument(requireFirestore()).set(profile.toFirestore()).awaitValue()
     }
 
     override suspend fun upsertCategory(category: BudgetCategory) {
@@ -278,6 +293,18 @@ class FirebaseFinanceRepository(
                     return@addSnapshotListener
                 }
                 trySend(snapshot?.toUserProfile(uid) ?: FinanceDefaults.userProfile(uid))
+            }
+            awaitClose { registration.remove() }
+        }
+
+    private fun observeUserFinancialProfile(db: FirebaseFirestore): Flow<UserFinancialProfile?> =
+        callbackFlow {
+            val registration = userFinancialProfileDocument(db).addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                trySend(snapshot?.takeIf { it.exists() }?.toUserFinancialProfile(uid))
             }
             awaitClose { registration.remove() }
         }
@@ -475,6 +502,9 @@ class FirebaseFinanceRepository(
     private fun profileDocument(db: FirebaseFirestore): DocumentReference =
         financeCollection(db).document("profile")
 
+    private fun userFinancialProfileDocument(db: FirebaseFirestore): DocumentReference =
+        financeCollection(db).document("userFinancialProfile")
+
     private fun debtDocument(db: FirebaseFirestore): DocumentReference =
         financeCollection(db).document("debt")
 
@@ -541,8 +571,75 @@ class FirebaseFinanceRepository(
             "salary" to salary,
             "extraIncome" to extraIncome,
             "monthlySavingsTarget" to monthlySavingsTarget,
+            "salaryDayOfMonth" to salaryDayOfMonth,
+            "onboardingCompleted" to onboardingCompleted,
+            "primaryGoalId" to primaryGoalId,
             "createdAtMillis" to createdAtMillis,
             "updatedAtMillis" to updatedAtMillis
+        )
+
+    private fun UserFinancialProfile.toFirestore(): Map<String, Any?> =
+        mapOf(
+            "uid" to uid,
+            "controlFocus" to controlFocus.name,
+            "monthlyIncome" to monthlyIncome,
+            "currency" to currency,
+            "salaryDayOfMonth" to salaryDayOfMonth,
+            "fixedExpenses" to fixedExpenses.map { it.toFirestore() },
+            "debtProfile" to debtProfile.toFirestore(),
+            "primarySavingsGoal" to primarySavingsGoal?.toFirestore(),
+            "preferences" to preferences.toFirestore(),
+            "onboardingCompleted" to onboardingCompleted,
+            "createdAtMillis" to createdAtMillis,
+            "updatedAtMillis" to updatedAtMillis
+        )
+
+    private fun FixedExpense.toFirestore(): Map<String, Any> =
+        mapOf(
+            "id" to id,
+            "name" to name,
+            "amount" to amount,
+            "dueDayOfMonth" to dueDayOfMonth
+        )
+
+    private fun DebtProfile.toFirestore(): Map<String, Any?> =
+        mapOf(
+            "hasDebt" to hasDebt,
+            "totalDebtAmount" to totalDebtAmount,
+            "lenderType" to lenderType.name,
+            "pressureLevel" to pressureLevel.name,
+            "monthlyInstallmentAmount" to monthlyInstallmentAmount,
+            "dueDayOfMonth" to dueDayOfMonth
+        )
+
+    private fun PrimarySavingsGoal.toFirestore(): Map<String, Any> =
+        mapOf(
+            "name" to name,
+            "purpose" to purpose.name,
+            "targetAmount" to targetAmount,
+            "targetDate" to targetDate,
+            "monthlyTargetSuggestion" to monthlyTargetSuggestion
+        )
+
+    private fun UserPreferenceSetup.toFirestore(): Map<String, Any> =
+        mapOf(
+            "categoryBudgets" to categoryBudgets.map { it.toFirestore() },
+            "dailyUseBankSender" to dailyUseBankSender,
+            "savingsBankSender" to savingsBankSender,
+            "dailyUseAccountSuffix" to dailyUseAccountSuffix,
+            "savingsAccountSuffix" to savingsAccountSuffix,
+            "monthlySavingsReminderEnabled" to monthlySavingsReminderEnabled,
+            "debtPaymentReminderEnabled" to debtPaymentReminderEnabled,
+            "overspendingWarningEnabled" to overspendingWarningEnabled,
+            "necessaryItemReminderEnabled" to necessaryItemReminderEnabled
+        )
+
+    private fun CategoryBudgetSetup.toFirestore(): Map<String, Any> =
+        mapOf(
+            "id" to id,
+            "name" to name,
+            "monthlyBudget" to monthlyBudget,
+            "isEnabled" to isEnabled
         )
 
     private fun BudgetCategory.toFirestore(): Map<String, Any> =
@@ -662,15 +759,21 @@ class FirebaseFinanceRepository(
             "name" to name,
             "targetAmount" to targetAmount,
             "savedAmount" to savedAmount,
+            "targetDate" to targetDate,
+            "purpose" to purpose.name,
+            "isPrimary" to isPrimary,
             "createdAtMillis" to createdAtMillis,
             "updatedAtMillis" to updatedAtMillis
         )
 
-    private fun DebtTracker.toFirestore(): Map<String, Any> =
+    private fun DebtTracker.toFirestore(): Map<String, Any?> =
         mapOf(
             "startingAmount" to startingAmount,
             "remainingAmount" to remainingAmount,
             "monthlyAutoReduction" to monthlyAutoReduction,
+            "lenderType" to lenderType.name,
+            "pressureLevel" to pressureLevel.name,
+            "dueDayOfMonth" to dueDayOfMonth,
             "updatedAtMillis" to updatedAtMillis
         )
 
@@ -748,12 +851,38 @@ class FirebaseFinanceRepository(
         UserProfile(
             uid = getString("uid") ?: uid,
             currency = getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
-            salary = double("salary", 5000.0),
-            extraIncome = double("extraIncome", 500.0),
-            monthlySavingsTarget = double("monthlySavingsTarget", 1700.0),
+            salary = double("salary", 0.0),
+            extraIncome = double("extraIncome", 0.0),
+            monthlySavingsTarget = double("monthlySavingsTarget", 0.0),
+            salaryDayOfMonth = int("salaryDayOfMonth", 1).coerceIn(1, 31),
+            onboardingCompleted = getBoolean("onboardingCompleted") ?: false,
+            primaryGoalId = getString("primaryGoalId") ?: "",
             createdAtMillis = long("createdAtMillis"),
             updatedAtMillis = long("updatedAtMillis")
         )
+
+    @Suppress("UNCHECKED_CAST")
+    private fun DocumentSnapshot.toUserFinancialProfile(uid: String): UserFinancialProfile {
+        val preferences = (get("preferences") as? Map<String, Any>)?.toUserPreferenceSetup()
+            ?: UserPreferenceSetup()
+        return UserFinancialProfile(
+            uid = getString("uid") ?: uid,
+            controlFocus = goalPurpose(getString("controlFocus")),
+            monthlyIncome = double("monthlyIncome", 0.0),
+            currency = getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
+            salaryDayOfMonth = int("salaryDayOfMonth", 1).coerceIn(1, 31),
+            fixedExpenses = (get("fixedExpenses") as? List<*>)
+                ?.mapNotNull { it as? Map<String, Any> }
+                ?.map { it.toFixedExpense() }
+                ?: emptyList(),
+            debtProfile = (get("debtProfile") as? Map<String, Any>)?.toDebtProfile() ?: DebtProfile(),
+            primarySavingsGoal = (get("primarySavingsGoal") as? Map<String, Any>)?.toPrimarySavingsGoal(),
+            preferences = preferences,
+            onboardingCompleted = getBoolean("onboardingCompleted") ?: false,
+            createdAtMillis = long("createdAtMillis"),
+            updatedAtMillis = long("updatedAtMillis")
+        )
+    }
 
     private fun DocumentSnapshot.toBudgetCategory(): BudgetCategory =
         BudgetCategory(
@@ -879,15 +1008,21 @@ class FirebaseFinanceRepository(
             name = getString("name") ?: id,
             targetAmount = double("targetAmount"),
             savedAmount = double("savedAmount"),
+            targetDate = getString("targetDate") ?: "",
+            purpose = goalPurpose(getString("purpose")),
+            isPrimary = getBoolean("isPrimary") ?: false,
             createdAtMillis = long("createdAtMillis"),
             updatedAtMillis = long("updatedAtMillis")
         )
 
     private fun DocumentSnapshot.toDebtTracker(): DebtTracker =
         DebtTracker(
-            startingAmount = double("startingAmount", 7000.0),
-            remainingAmount = double("remainingAmount", 7000.0),
-            monthlyAutoReduction = double("monthlyAutoReduction", 500.0),
+            startingAmount = double("startingAmount", 0.0),
+            remainingAmount = double("remainingAmount", 0.0),
+            monthlyAutoReduction = double("monthlyAutoReduction", 0.0),
+            lenderType = debtLenderType(getString("lenderType")),
+            pressureLevel = debtPressureLevel(getString("pressureLevel")),
+            dueDayOfMonth = nullableInt("dueDayOfMonth")?.coerceIn(1, 31),
             updatedAtMillis = long("updatedAtMillis")
         )
 
@@ -994,6 +1129,9 @@ class FirebaseFinanceRepository(
     private fun DocumentSnapshot.nullableDouble(field: String): Double? =
         (get(field) as? Number)?.toDouble()
 
+    private fun DocumentSnapshot.nullableInt(field: String): Int? =
+        (get(field) as? Number)?.toInt()
+
     private fun DocumentSnapshot.long(field: String, default: Long = 0L): Long =
         (get(field) as? Number)?.toLong() ?: default
 
@@ -1015,6 +1153,58 @@ class FirebaseFinanceRepository(
         BankMessageSourceSettings(
             senderName = value?.get("senderName") as? String ?: default.senderName,
             isEnabled = value?.get("isEnabled") as? Boolean ?: default.isEnabled
+        )
+
+    private fun Map<String, Any>.toFixedExpense(): FixedExpense =
+        FixedExpense(
+            id = this["id"] as? String ?: "",
+            name = this["name"] as? String ?: "",
+            amount = (this["amount"] as? Number)?.toDouble() ?: 0.0,
+            dueDayOfMonth = ((this["dueDayOfMonth"] as? Number)?.toInt() ?: 1).coerceIn(1, 31)
+        )
+
+    private fun Map<String, Any>.toDebtProfile(): DebtProfile =
+        DebtProfile(
+            hasDebt = this["hasDebt"] as? Boolean ?: false,
+            totalDebtAmount = (this["totalDebtAmount"] as? Number)?.toDouble() ?: 0.0,
+            lenderType = debtLenderType(this["lenderType"] as? String),
+            pressureLevel = debtPressureLevel(this["pressureLevel"] as? String),
+            monthlyInstallmentAmount = (this["monthlyInstallmentAmount"] as? Number)?.toDouble() ?: 0.0,
+            dueDayOfMonth = (this["dueDayOfMonth"] as? Number)?.toInt()?.coerceIn(1, 31)
+        )
+
+    private fun Map<String, Any>.toPrimarySavingsGoal(): PrimarySavingsGoal =
+        PrimarySavingsGoal(
+            name = this["name"] as? String ?: "",
+            purpose = goalPurpose(this["purpose"] as? String),
+            targetAmount = (this["targetAmount"] as? Number)?.toDouble() ?: 0.0,
+            targetDate = this["targetDate"] as? String ?: "",
+            monthlyTargetSuggestion = (this["monthlyTargetSuggestion"] as? Number)?.toDouble() ?: 0.0
+        )
+
+    @Suppress("UNCHECKED_CAST")
+    private fun Map<String, Any>.toUserPreferenceSetup(): UserPreferenceSetup =
+        UserPreferenceSetup(
+            categoryBudgets = (this["categoryBudgets"] as? List<*>)
+                ?.mapNotNull { it as? Map<String, Any> }
+                ?.map { it.toCategoryBudgetSetup() }
+                ?: FinanceDefaults.onboardingCategoryTemplates(),
+            dailyUseBankSender = this["dailyUseBankSender"] as? String ?: "",
+            savingsBankSender = this["savingsBankSender"] as? String ?: "",
+            dailyUseAccountSuffix = this["dailyUseAccountSuffix"] as? String ?: "",
+            savingsAccountSuffix = this["savingsAccountSuffix"] as? String ?: "",
+            monthlySavingsReminderEnabled = this["monthlySavingsReminderEnabled"] as? Boolean ?: true,
+            debtPaymentReminderEnabled = this["debtPaymentReminderEnabled"] as? Boolean ?: true,
+            overspendingWarningEnabled = this["overspendingWarningEnabled"] as? Boolean ?: true,
+            necessaryItemReminderEnabled = this["necessaryItemReminderEnabled"] as? Boolean ?: true
+        )
+
+    private fun Map<String, Any>.toCategoryBudgetSetup(): CategoryBudgetSetup =
+        CategoryBudgetSetup(
+            id = this["id"] as? String ?: "",
+            name = this["name"] as? String ?: "",
+            monthlyBudget = (this["monthlyBudget"] as? Number)?.toDouble() ?: 0.0,
+            isEnabled = this["isEnabled"] as? Boolean ?: true
         )
 
     private fun categoryType(value: String?): CategoryType =
@@ -1053,12 +1243,27 @@ class FirebaseFinanceRepository(
     private fun internalTransferStatus(value: String?): InternalTransferStatus? =
         InternalTransferStatus.entries.firstOrNull { it.name == value }
 
+    private fun debtLenderType(value: String?): DebtLenderType =
+        DebtLenderType.entries.firstOrNull { it.name == value } ?: DebtLenderType.OTHER
+
+    private fun debtPressureLevel(value: String?): DebtPressureLevel =
+        DebtPressureLevel.entries.firstOrNull { it.name == value } ?: DebtPressureLevel.FLEXIBLE
+
+    private fun goalPurpose(value: String?): GoalPurpose =
+        GoalPurpose.entries.firstOrNull { it.name == value } ?: GoalPurpose.CUSTOM
+
     private fun AccountBalanceSnapshot.documentId(): String =
         "${accountKind.name}-$sourceMessageHash"
 }
 
+private data class ProfileCore(
+    val profile: UserProfile,
+    val financialProfile: UserFinancialProfile?
+)
+
 private data class FinanceCore(
     val profile: UserProfile,
+    val financialProfile: UserFinancialProfile?,
     val categories: List<BudgetCategory>,
     val transactions: List<ExpenseTransaction>,
     val incomeTransactions: List<IncomeTransaction>,

@@ -5,6 +5,10 @@ Run these against a fresh install and an existing account before sharing a perso
 ## Auth
 
 - Register a new account.
+- Confirm a new account opens the onboarding flow before the main app.
+- Complete onboarding with custom income, debt, goal, categories, SMS senders, and reminders.
+- Confirm the dashboard uses the custom goal name and does not show universal marriage/January defaults.
+- Log into an existing account with pre-existing data and confirm the migration screen offers to keep the plan.
 - Log out and log back in.
 - Try a wrong password and confirm the error is friendly.
 
@@ -34,11 +38,18 @@ Run these against a fresh install and an existing account before sharing a perso
 
 ## Settings And Setup
 
-- Confirm the setup checklist updates for login, sender names, account suffixes, SMS permission, notification permission, monthly savings target, and January target.
+- Confirm the setup checklist updates for login, sender names, account suffixes, SMS permission, notification permission, monthly savings target, and goal target.
 - Confirm the Privacy note is visible.
 - Save bank sender settings.
 - Save reminder settings.
 - Add, edit, mark done/skipped, and delete a reminder item.
+
+## Visual System
+
+- Confirm splash shows quickly and enters the app without a blank frame.
+- Confirm the adaptive icon reads as a simple financial guard/coin mark, not a letter-only placeholder.
+- Scan Dashboard, Transactions, Goals, AI Chat, and Settings for consistent spacing, rounded cards, readable section headers, and non-overlapping text in light and dark theme.
+- Confirm AI Chat suggested prompts are visible and send the expected prompt text.
 
 ## Notifications
 

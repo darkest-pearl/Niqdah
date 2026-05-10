@@ -15,6 +15,7 @@ class MainActivity : ComponentActivity() {
     private var openTransactionsRequest by mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        setTheme(R.style.Theme_Niqdah)
         super.onCreate(savedInstanceState)
         if (intent.shouldOpenTransactions()) {
             openTransactionsRequest += 1

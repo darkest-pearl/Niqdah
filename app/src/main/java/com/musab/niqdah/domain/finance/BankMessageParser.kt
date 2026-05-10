@@ -163,7 +163,7 @@ class BankMessageParser {
         )
         val categorySuggestion = when (parsedType) {
             ParsedBankMessageType.SAVINGS_TRANSFER -> categoryFor(
-                categoryId = FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID,
+                categoryId = FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID,
                 categories = categories,
                 necessity = NecessityLevel.NECESSARY
             )
@@ -905,7 +905,7 @@ class BankMessageParser {
             "savings account",
             "saving account",
             "moved to savings",
-            "marriage savings",
+            "goal savings",
             "goal account",
             "reserve account",
             "saved to",

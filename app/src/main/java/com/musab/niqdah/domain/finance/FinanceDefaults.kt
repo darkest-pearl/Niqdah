@@ -1,7 +1,14 @@
 package com.musab.niqdah.domain.finance
 
 object FinanceDefaults {
+    const val PRIMARY_GOAL_ID = "primary_goal"
+    const val SAVINGS_GOAL_CATEGORY_ID = "savings_goal"
+    const val DEBT_PAYMENT_CATEGORY_ID = "debt_payment"
+
+    // Legacy IDs are kept so existing users and historical documents continue to load.
     const val MARRIAGE_GOAL_ID = "marriage_fund"
+    const val MARRIAGE_SAVINGS_CATEGORY_ID = "marriage_savings"
+
     const val DEFAULT_CURRENCY = "AED"
     const val UNCATEGORIZED_CATEGORY_ID = "uncategorized"
     const val FOOD_TRANSPORT_CATEGORY_ID = "food_transport"
@@ -11,11 +18,10 @@ object FinanceDefaults {
     const val FIANCEE_CATEGORY_ID = "fiancee"
     const val FAMILY_GIFTS_CATEGORY_ID = "family_gifts_expense"
     const val AVOID_CATEGORY_ID = "avoid"
-    const val MARRIAGE_SAVINGS_CATEGORY_ID = "marriage_savings"
     const val DEFAULT_INTERNAL_TRANSFER_REMINDER_MINUTES = 10
-    const val DEFAULT_JANUARY_TARGET_DATE = "2027-01-01"
-    const val DEFAULT_MARRIAGE_FUND_TARGET = 13600.0
-    const val DEFAULT_MONTHLY_SAVINGS_TARGET = 1700.0
+    const val DEFAULT_JANUARY_TARGET_DATE = ""
+    const val DEFAULT_MARRIAGE_FUND_TARGET = 0.0
+    const val DEFAULT_MONTHLY_SAVINGS_TARGET = 0.0
 
     val DEFAULT_DEBIT_KEYWORDS = listOf(
         "debited",
@@ -49,9 +55,9 @@ object FinanceDefaults {
         "saving account",
         "savings account",
         "moved to savings",
+        "goal savings",
         "goal account",
         "reserve account",
-        "marriage savings",
         "saved to",
         "deposited to savings"
     )
@@ -60,9 +66,12 @@ object FinanceDefaults {
         UserProfile(
             uid = uid,
             currency = DEFAULT_CURRENCY,
-            salary = 5000.0,
-            extraIncome = 500.0,
-            monthlySavingsTarget = DEFAULT_MONTHLY_SAVINGS_TARGET,
+            salary = 0.0,
+            extraIncome = 0.0,
+            monthlySavingsTarget = 0.0,
+            salaryDayOfMonth = 1,
+            onboardingCompleted = false,
+            primaryGoalId = "",
             createdAtMillis = now,
             updatedAtMillis = now
         )
@@ -80,7 +89,7 @@ object FinanceDefaults {
             BudgetCategory(
                 id = RENT_CATEGORY_ID,
                 name = "Rent",
-                monthlyBudget = 1300.0,
+                monthlyBudget = 0.0,
                 type = CategoryType.FIXED,
                 createdAtMillis = now,
                 updatedAtMillis = now
@@ -88,7 +97,7 @@ object FinanceDefaults {
             BudgetCategory(
                 id = FOOD_TRANSPORT_CATEGORY_ID,
                 name = "Food/transport",
-                monthlyBudget = 800.0,
+                monthlyBudget = 0.0,
                 type = CategoryType.VARIABLE,
                 createdAtMillis = now,
                 updatedAtMillis = now
@@ -96,7 +105,7 @@ object FinanceDefaults {
             BudgetCategory(
                 id = MEDICAL_CATEGORY_ID,
                 name = "Medical",
-                monthlyBudget = 250.0,
+                monthlyBudget = 0.0,
                 type = CategoryType.VARIABLE,
                 createdAtMillis = now,
                 updatedAtMillis = now
@@ -104,23 +113,39 @@ object FinanceDefaults {
             BudgetCategory(
                 id = CLOTHING_CATEGORY_ID,
                 name = "Clothing",
-                monthlyBudget = 200.0,
+                monthlyBudget = 0.0,
                 type = CategoryType.VARIABLE,
                 createdAtMillis = now,
                 updatedAtMillis = now
             ),
             BudgetCategory(
-                id = FIANCEE_CATEGORY_ID,
-                name = "Fiancée",
-                monthlyBudget = 300.0,
+                id = "family",
+                name = "Family",
+                monthlyBudget = 0.0,
                 type = CategoryType.VARIABLE,
                 createdAtMillis = now,
                 updatedAtMillis = now
             ),
             BudgetCategory(
-                id = FAMILY_GIFTS_CATEGORY_ID,
-                name = "Family gifts",
-                monthlyBudget = 200.0,
+                id = "subscriptions",
+                name = "Subscriptions",
+                monthlyBudget = 0.0,
+                type = CategoryType.VARIABLE,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            BudgetCategory(
+                id = "shopping",
+                name = "Shopping",
+                monthlyBudget = 0.0,
+                type = CategoryType.VARIABLE,
+                createdAtMillis = now,
+                updatedAtMillis = now
+            ),
+            BudgetCategory(
+                id = "emergency",
+                name = "Emergency",
+                monthlyBudget = 0.0,
                 type = CategoryType.VARIABLE,
                 createdAtMillis = now,
                 updatedAtMillis = now
@@ -134,82 +159,42 @@ object FinanceDefaults {
                 updatedAtMillis = now
             ),
             BudgetCategory(
-                id = MARRIAGE_SAVINGS_CATEGORY_ID,
-                name = "Marriage savings",
-                monthlyBudget = DEFAULT_MONTHLY_SAVINGS_TARGET,
+                id = SAVINGS_GOAL_CATEGORY_ID,
+                name = "Savings goal",
+                monthlyBudget = 0.0,
                 type = CategoryType.SAVINGS,
                 createdAtMillis = now,
                 updatedAtMillis = now
             ),
             BudgetCategory(
-                id = "debt_payment",
+                id = DEBT_PAYMENT_CATEGORY_ID,
                 name = "Debt payment",
-                monthlyBudget = 500.0,
+                monthlyBudget = 0.0,
                 type = CategoryType.DEBT,
                 createdAtMillis = now,
                 updatedAtMillis = now
             ),
             BudgetCategory(
-                id = "personal",
-                name = "Personal",
-                monthlyBudget = 400.0,
+                id = "other",
+                name = "Other",
+                monthlyBudget = 0.0,
                 type = CategoryType.VARIABLE,
                 createdAtMillis = now,
                 updatedAtMillis = now
             )
         )
 
-    fun savingsGoals(now: Long = System.currentTimeMillis()): List<SavingsGoal> =
-        listOf(
-            SavingsGoal(
-                id = MARRIAGE_GOAL_ID,
-                name = "Marriage fund",
-                targetAmount = DEFAULT_MARRIAGE_FUND_TARGET,
-                createdAtMillis = now,
-                updatedAtMillis = now
-            ),
-            SavingsGoal(
-                id = "travel_visa",
-                name = "Travel/Visa",
-                targetAmount = 3600.0,
-                createdAtMillis = now,
-                updatedAtMillis = now
-            ),
-            SavingsGoal(
-                id = "wedding",
-                name = "Wedding",
-                targetAmount = 4000.0,
-                createdAtMillis = now,
-                updatedAtMillis = now
-            ),
-            SavingsGoal(
-                id = "bride_package",
-                name = "Bride package",
-                targetAmount = 4000.0,
-                createdAtMillis = now,
-                updatedAtMillis = now
-            ),
-            SavingsGoal(
-                id = "family_gifts",
-                name = "Family gifts",
-                targetAmount = 800.0,
-                createdAtMillis = now,
-                updatedAtMillis = now
-            ),
-            SavingsGoal(
-                id = "emergency_reserve",
-                name = "Emergency reserve",
-                targetAmount = 1200.0,
-                createdAtMillis = now,
-                updatedAtMillis = now
-            )
-        )
+    @Suppress("UNUSED_PARAMETER")
+    fun savingsGoals(now: Long = System.currentTimeMillis()): List<SavingsGoal> = emptyList()
 
     fun debtTracker(now: Long = System.currentTimeMillis()): DebtTracker =
         DebtTracker(
-            startingAmount = 7000.0,
-            remainingAmount = 7000.0,
-            monthlyAutoReduction = 500.0,
+            startingAmount = 0.0,
+            remainingAmount = 0.0,
+            monthlyAutoReduction = 0.0,
+            lenderType = DebtLenderType.OTHER,
+            pressureLevel = DebtPressureLevel.FLEXIBLE,
+            dueDayOfMonth = null,
             updatedAtMillis = now
         )
 
@@ -232,73 +217,42 @@ object FinanceDefaults {
             monthlySavingsReminderDay = 1,
             monthlySavingsReminderHour = 9,
             monthlySavingsReminderMinute = 0,
-            monthlySavingsTargetAmount = DEFAULT_MONTHLY_SAVINGS_TARGET,
+            monthlySavingsTargetAmount = 0.0,
             isMissedSavingsReminderEnabled = true,
             missedSavingsCheckDay = 20,
             missedSavingsReminderHour = 19,
             missedSavingsReminderMinute = 0,
             areOverspendingWarningsEnabled = true,
             isAvoidCategoryWarningEnabled = true,
-            januaryTargetDate = DEFAULT_JANUARY_TARGET_DATE,
-            januaryFundTargetAmount = DEFAULT_MARRIAGE_FUND_TARGET,
+            januaryTargetDate = "",
+            januaryFundTargetAmount = 0.0,
             updatedAtMillis = now
         )
 
-    fun necessaryItems(now: Long = System.currentTimeMillis()): List<NecessaryItem> =
+    @Suppress("UNUSED_PARAMETER")
+    fun necessaryItems(now: Long = System.currentTimeMillis()): List<NecessaryItem> = emptyList()
+
+    fun onboardingFixedExpenseTemplates(): List<FixedExpense> =
         listOf(
-            NecessaryItem(
-                id = "rent",
-                title = "Rent",
-                amount = 1300.0,
-                dueDayOfMonth = 1,
-                recurrence = NecessaryItemRecurrence.MONTHLY,
-                createdAtMillis = now,
-                updatedAtMillis = now
-            ),
-            NecessaryItem(
-                id = "savings_transfer",
-                title = "Savings transfer",
-                amount = DEFAULT_MONTHLY_SAVINGS_TARGET,
-                dueDayOfMonth = 1,
-                recurrence = NecessaryItemRecurrence.MONTHLY,
-                createdAtMillis = now,
-                updatedAtMillis = now
-            ),
-            NecessaryItem(
-                id = "debt_payment",
-                title = "Debt payment",
-                amount = 500.0,
-                dueDayOfMonth = 1,
-                recurrence = NecessaryItemRecurrence.MONTHLY,
-                createdAtMillis = now,
-                updatedAtMillis = now
-            ),
-            NecessaryItem(
-                id = "medical",
-                title = "Medical appointment",
-                amount = null,
-                dueDayOfMonth = 15,
-                recurrence = NecessaryItemRecurrence.MONTHLY,
-                createdAtMillis = now,
-                updatedAtMillis = now
-            ),
-            NecessaryItem(
-                id = "dental",
-                title = "Braces/dental",
-                amount = null,
-                dueDayOfMonth = 15,
-                recurrence = NecessaryItemRecurrence.MONTHLY,
-                createdAtMillis = now,
-                updatedAtMillis = now
-            ),
-            NecessaryItem(
-                id = "groceries_basics",
-                title = "Groceries basics",
-                amount = null,
-                dueDayOfMonth = 5,
-                recurrence = NecessaryItemRecurrence.MONTHLY,
-                createdAtMillis = now,
-                updatedAtMillis = now
-            )
+            FixedExpense(id = "rent", name = "Rent", amount = 0.0, dueDayOfMonth = 1),
+            FixedExpense(id = FOOD_TRANSPORT_CATEGORY_ID, name = "Food/transport", amount = 0.0, dueDayOfMonth = 1),
+            FixedExpense(id = "phone_internet", name = "Phone/internet", amount = 0.0, dueDayOfMonth = 1),
+            FixedExpense(id = "family_support", name = "Family support", amount = 0.0, dueDayOfMonth = 1),
+            FixedExpense(id = "other_fixed", name = "Other", amount = 0.0, dueDayOfMonth = 1)
         )
+
+    fun onboardingCategoryTemplates(): List<CategoryBudgetSetup> =
+        budgetCategories().filter { category ->
+            category.id != UNCATEGORIZED_CATEGORY_ID &&
+                category.id != SAVINGS_GOAL_CATEGORY_ID &&
+                category.id != DEBT_PAYMENT_CATEGORY_ID &&
+                category.id != AVOID_CATEGORY_ID
+        }.map { category ->
+            CategoryBudgetSetup(
+                id = category.id,
+                name = category.name,
+                monthlyBudget = 0.0,
+                isEnabled = true
+            )
+        }
 }

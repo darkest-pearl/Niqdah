@@ -5,4 +5,8 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+
+    <style name="Theme.Niqdah.Starting" parent="Theme.Niqdah">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+    </style>
 </resources>

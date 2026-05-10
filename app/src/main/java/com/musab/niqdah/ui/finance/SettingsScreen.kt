@@ -105,15 +105,15 @@ fun SettingsScreen(
     var monthlySavingsReminderDay by remember { mutableStateOf("1") }
     var monthlySavingsReminderHour by remember { mutableStateOf("9") }
     var monthlySavingsReminderMinute by remember { mutableStateOf("0") }
-    var reminderSavingsTarget by remember { mutableStateOf("1700") }
+    var reminderSavingsTarget by remember { mutableStateOf("") }
     var isMissedSavingsReminderEnabled by remember { mutableStateOf(true) }
     var missedSavingsCheckDay by remember { mutableStateOf("20") }
     var missedSavingsReminderHour by remember { mutableStateOf("19") }
     var missedSavingsReminderMinute by remember { mutableStateOf("0") }
     var areOverspendingWarningsEnabled by remember { mutableStateOf(true) }
     var isAvoidCategoryWarningEnabled by remember { mutableStateOf(true) }
-    var januaryTargetDate by remember { mutableStateOf("2027-01-01") }
-    var januaryFundTarget by remember { mutableStateOf("13600") }
+    var januaryTargetDate by remember { mutableStateOf("") }
+    var januaryFundTarget by remember { mutableStateOf("") }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -469,7 +469,7 @@ private fun SetupChecklistCard(
         "SMS permission" to isSmsPermissionGranted,
         "Notification permission" to isNotificationPermissionGranted,
         "Monthly savings target" to (reminderSettings.monthlySavingsTargetAmount > 0.0),
-        "January target" to (
+        "Goal target" to (
             reminderSettings.januaryTargetDate.isNotBlank() &&
                 reminderSettings.januaryFundTargetAmount > 0.0
             )
@@ -901,7 +901,7 @@ private fun ReminderSettingsCard(
                 modifier = Modifier.fillMaxWidth(),
                 value = januaryTargetDate,
                 onValueChange = onJanuaryTargetDateChange,
-                label = { Text("January target date") },
+                label = { Text("Goal target date") },
                 supportingText = { Text("YYYY-MM-DD") },
                 singleLine = true
             )

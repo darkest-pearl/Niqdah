@@ -42,6 +42,7 @@ fun GoalsScreen(
     onClearError: () -> Unit
 ) {
     val currency = uiState.data.profile.currency
+    val goals = uiState.data.goals.sortedByDescending { it.isPrimary || it.id == uiState.data.profile.primaryGoalId }
     var editingGoal by remember { mutableStateOf<SavingsGoal?>(null) }
     var showDebtPaymentDialog by remember { mutableStateOf(false) }
 
@@ -55,7 +56,7 @@ fun GoalsScreen(
         item {
             FinanceHeader(
                 title = "Goals",
-                subtitle = "Separate envelopes for wedding preparation and resilience."
+                subtitle = "Primary goal, envelopes, and debt progress."
             )
         }
         item { ErrorBanner(message = uiState.errorMessage, onDismiss = onClearError) }
@@ -71,13 +72,25 @@ fun GoalsScreen(
                 )
             }
         }
-        items(uiState.data.goals, key = { it.id }) { goal ->
+        item { SectionHeader(title = "Primary goal") }
+        items(goals.take(1), key = { it.id }) { goal ->
             GoalCard(
                 goal = goal,
                 currency = currency,
                 onUpdate = { editingGoal = goal }
             )
         }
+        if (goals.size > 1) {
+            item { SectionHeader(title = "Other goals") }
+            items(goals.drop(1), key = { it.id }) { goal ->
+                GoalCard(
+                    goal = goal,
+                    currency = currency,
+                    onUpdate = { editingGoal = goal }
+                )
+            }
+        }
+        item { SectionHeader(title = "Debt progress") }
         item {
             DebtCard(
                 uiState = uiState,

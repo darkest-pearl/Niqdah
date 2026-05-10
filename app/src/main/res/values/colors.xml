@@ -1,3 +1,5 @@
 <resources>
-    <color name="launcher_background">#E7F2EC</color>
+    <color name="launcher_background">#E4F1EC</color>
+    <color name="splash_background">#F6F8F5</color>
+    <color name="splash_icon_tint">#175D4D</color>
 </resources>

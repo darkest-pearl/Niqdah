@@ -1,8 +1,8 @@
 # Niqdah
 
-Niqdah is a personal Android finance app for disciplined budgeting and wedding preparation, built with Kotlin, Jetpack Compose, Material 3, Firebase Auth, Firestore, and Firebase Cloud Functions.
+Niqdah is a personal Android finance app for disciplined budgeting, debt pressure, savings goals, and everyday spending control, built with Kotlin, Jetpack Compose, Material 3, Firebase Auth, Firestore, and Firebase Cloud Functions.
 
-Phase 6 includes email/password auth, a manual finance engine, dashboard calculations, transaction tracking, savings envelopes, debt tracking, editable settings, persistent Firestore data under each authenticated user, a secure AI Chat backend, manual bank message import, review-first incoming SMS import for selected bank senders, account balance tracking, pending-import notification actions, personal financial discipline reminders, Firebase security rules, release notes, and QA checklists.
+Phase 7A adds a personalized first-run onboarding flow, neutral finance defaults, a more premium visual system, a splash experience, and an upgraded adaptive icon placeholder. Existing manual expenses, AI Chat, SMS import, internal transfer pairing, balance tracking, reminders, and release prep remain intact.
 
 ## Tech Stack
 
@@ -90,7 +90,7 @@ AI Chat screen
   -> OpenAI Responses API
 ```
 
-Payload sent to the backend includes the user message, in-session chat history, and a trimmed finance context: profile income, savings target, debt tracker, current month snapshot, category budgets, savings goals, discipline status, necessary items due, January countdown, and recent transactions. Bank-like SMS text pasted into AI Chat is withheld locally; AI receives only a parsed financial summary for that draft.
+Payload sent to the backend includes the user message, in-session chat history, and a trimmed finance context: profile income, savings target, debt tracker, current month snapshot, category budgets, savings goals, discipline status, necessary items due, goal countdown, and recent transactions. Bank-like SMS text pasted into AI Chat is withheld locally; AI receives only a parsed financial summary for that draft.
 
 ## Firestore Data Shape
 
@@ -98,6 +98,7 @@ Niqdah stores finance data under the authenticated Firebase user UID:
 
 ```text
 users/{uid}/finance/profile
+users/{uid}/finance/userFinancialProfile
 users/{uid}/finance/debt
 users/{uid}/finance/bankMessageSettings
 users/{uid}/finance/reminderSettings
@@ -112,7 +113,7 @@ users/{uid}/necessaryItems/{necessaryItemId}
 users/{uid}/monthlySnapshots/{yearMonth}
 ```
 
-The first sign-in seeds the default salary, extra income, rent, food/transport budget, marriage savings target, debt tracker, and wedding-preparation envelopes.
+The first sign-in now creates only neutral setup documents. If `onboardingCompleted` is false, Niqdah shows the onboarding flow before the main app. Onboarding writes the user's real income, salary day, fixed expenses, debt plan, primary savings goal, category budgets, SMS sender configuration, and reminder preferences under the signed-in UID. Existing users with old data see a migration screen that can keep the current plan without overwriting transactions, balances, goals, or SMS settings.
 
 ## Phase 4A Manual Bank Message Import
 
@@ -126,7 +127,7 @@ Settings includes **Bank message sources**:
 - Savings sender name and enable/disable toggle
 - Comma-separated debit, credit, and savings-transfer keywords
 
-Daily-use debit messages save as expense transactions. Category inference is rule-based and falls back to **Uncategorized**. Savings transfer messages update the current month imported savings contribution and the marriage fund saved amount, helping show progress toward the monthly 1,700 AED marriage savings target. Credit messages save as income transaction records and are included in dashboard monthly income.
+Daily-use debit messages save as expense transactions. Category inference is rule-based and falls back to **Uncategorized**. Savings transfer messages update the current month imported savings contribution and the user's primary savings goal when one exists. Credit messages save as income transaction records and are included in dashboard monthly income.
 
 Manual import remains available even when SMS permission is denied or automatic import is disabled.
 
@@ -167,17 +168,25 @@ Android 13+ devices also request `POST_NOTIFICATIONS` when automatic SMS import 
 
 Phase 5 adds local, gentle financial discipline reminders and dashboard guidance:
 
-- Monthly marriage savings transfer reminder, defaulting to "Remember to move AED 1,700 to your marriage savings fund."
+- Monthly savings transfer reminder based on the user's onboarding goal and calculated monthly target.
 - Missed savings reminder after a configured day if the current month is short of the target.
 - Category budget warnings at 75%, 100%, and over 100% for variable spending categories.
 - Avoid-category save warning: "This was marked Avoid. Consider whether it was necessary."
-- Necessary recurring items list for rent, savings transfer, debt payment, medical appointments, dental/braces, and groceries basics.
+- Necessary recurring items list generated from onboarding fixed costs, debt payment, and savings target, with manual editing in Settings.
 - Dashboard discipline card with savings status, categories near limit, due necessary items, avoid spending this month, and safe-to-spend.
-- January target countdown with editable target date and fund amount.
+- Goal countdown with editable target date and fund amount.
 
 Reminder settings controls live in Settings. WorkManager schedules Android-friendly local checks for monthly savings, missed savings, overspending, and necessary items. Notifications are posted only if `POST_NOTIFICATIONS` is already granted; Phase 5 does not add another notification permission prompt. Reminder wording is practical and non-shaming.
 
-Privacy posture remains the same: no `READ_SMS`, no SMS content sent to OpenAI, no OpenAI API key in the Android app, and no backend SMS access. AI Chat receives discipline summaries such as savings progress, overspent categories, due necessary items, safe-to-spend, and January countdown status. If bank-like SMS text is pasted into AI Chat, the Android app keeps the raw text local and sends only a parsed summary. AI cannot create reminders or write data; the Android UI must present any saveable action for review.
+Privacy posture remains the same: no `READ_SMS`, no SMS content sent to OpenAI, no OpenAI API key in the Android app, and no backend SMS access. AI Chat receives discipline summaries such as savings progress, overspent categories, due necessary items, safe-to-spend, and goal countdown status. If bank-like SMS text is pasted into AI Chat, the Android app keeps the raw text local and sends only a parsed summary. AI cannot create reminders or write data; the Android UI must present any saveable action for review.
+
+## Phase 7A Personalized Premium Setup
+
+Phase 7A moves Niqdah away from one hardcoded personal plan. New users now complete a story-style onboarding flow after registration/login. The flow asks about control focus, monthly income, fixed costs, debt, savings goal, categories, bank SMS tracking, and reminders, then shows a plan confirmation before the main app.
+
+The onboarding output becomes the user's Firestore plan. The dashboard then uses the user's primary goal name and target date instead of universal marriage or January wording. Old users are preserved through a migration screen that marks setup complete only after they choose to keep their existing plan.
+
+The visual system now includes shared premium Compose primitives such as `AppScaffold`, `PageHeader`, `PremiumCard`, `MetricCard`, `InsightCard`, `ActionCard`, `SectionHeader`, `EmptyState`, `StatusPill`, `WarningBanner`, `SuccessBanner`, and `ProgressRing`. The app also has a splash theme and an adaptive vector icon placeholder based on a coin-and-shield mark.
 
 ## Phase 6 Polish, Security, And Release Prep
 
@@ -223,12 +232,14 @@ app/src/main/java/com/musab/niqdah/
   ui/ai/               AI Chat screen and ViewModel
   ui/auth/             Login and register screens
   ui/finance/          Dashboard, transactions, goals, settings, and shared finance UI
+  ui/onboarding/       First-run onboarding and existing-plan migration
   ui/shell/            Authenticated bottom-navigation shell
   ui/theme/            Material 3 light/dark theme
 functions/
   src/index.ts         Callable Cloud Function using OpenAI Responses API
 docs/
   PHASES.md
+  PRODUCT_DIRECTION.md
   QA_CHECKLIST.md
   RELEASE.md
 ```
@@ -244,7 +255,8 @@ Included:
 - Logout from Settings
 - Loading state while auth state is checked
 - Friendly auth failure messages
-- Financial profile setup
+- First-run onboarding and existing-plan migration
+- Personalized financial profile setup
 - Monthly income setup
 - Fixed expenses and category budgets
 - Manual transaction add, edit, delete, note, month filter, category filter, and necessity level
@@ -252,13 +264,13 @@ Included:
 - Experimental incoming SMS bank import with pending review drafts
 - Account balance snapshots for daily-use and savings bank messages
 - Save, Edit, and Dismiss notification actions for pending bank import drafts
-- Monthly savings reminders, missed savings reminders, overspending warnings, avoid warnings, necessary item reminders, and January countdown
+- Monthly savings reminders, missed savings reminders, overspending warnings, avoid warnings, necessary item reminders, and goal countdown
 - Daily-use and savings bank message source settings
 - Rule-based category suggestions for pasted bank messages
 - Imported income records from credit messages
-- Marriage fund and wedding-preparation envelopes
+- Personalized primary savings goal and optional envelopes
 - Debt tracker and debt payment updates
-- Dashboard calculations for income, spending, safe-to-spend, savings, debt, overspending alerts, discipline status, January countdown, and health summary
+- Dashboard calculations for income, spending, safe-to-spend, savings, debt, overspending alerts, discipline status, goal countdown, and health summary
 - Dashboard and Settings latest balance status fields
 - Firestore persistence under `users/{uid}`
 - AI Chat with in-session history

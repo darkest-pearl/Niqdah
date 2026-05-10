@@ -68,13 +68,14 @@ class DisciplineReminderWorker(
         }
         val key = "monthly-savings-$yearMonth"
         if (alreadyNotified(key)) return
+        val goalName = data.primaryGoal?.name ?: "your savings goal"
         DisciplineNotificationPublisher.show(
             context = applicationContext,
             notificationId = key.hashCode(),
-            title = "Marriage savings",
+            title = "Savings transfer",
             text = "Remember to move ${
                 formatNotificationMoney(settings.monthlySavingsTargetAmount, data.profile.currency)
-            } to your marriage savings fund."
+            } to $goalName."
         )
     }
 
@@ -94,7 +95,7 @@ class DisciplineReminderWorker(
             title = "Savings target",
             text = "You are ${
                 formatNotificationMoney(savingsTarget.shortfall, data.profile.currency)
-            } short of this month's marriage savings target."
+            } short of this month's savings target."
         )
     }
 
@@ -190,6 +191,7 @@ class DisciplineReminderWorker(
 
         return FinanceData(
             profile = profile,
+            financialProfile = null,
             categories = categories,
             transactions = transactions,
             incomeTransactions = incomeTransactions,
@@ -209,9 +211,12 @@ class DisciplineReminderWorker(
         UserProfile(
             uid = getString("uid") ?: uid,
             currency = getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
-            salary = double("salary", 5000.0),
-            extraIncome = double("extraIncome", 500.0),
+            salary = double("salary", 0.0),
+            extraIncome = double("extraIncome", 0.0),
             monthlySavingsTarget = double("monthlySavingsTarget", FinanceDefaults.DEFAULT_MONTHLY_SAVINGS_TARGET),
+            salaryDayOfMonth = int("salaryDayOfMonth", 1).coerceIn(1, 31),
+            onboardingCompleted = getBoolean("onboardingCompleted") ?: false,
+            primaryGoalId = getString("primaryGoalId") ?: "",
             createdAtMillis = long("createdAtMillis"),
             updatedAtMillis = long("updatedAtMillis")
         )
@@ -260,15 +265,27 @@ class DisciplineReminderWorker(
             name = getString("name") ?: id,
             targetAmount = double("targetAmount"),
             savedAmount = double("savedAmount"),
+            targetDate = getString("targetDate") ?: "",
+            purpose = com.musab.niqdah.domain.finance.GoalPurpose.entries.firstOrNull {
+                it.name == getString("purpose")
+            } ?: com.musab.niqdah.domain.finance.GoalPurpose.CUSTOM,
+            isPrimary = getBoolean("isPrimary") ?: false,
             createdAtMillis = long("createdAtMillis"),
             updatedAtMillis = long("updatedAtMillis")
         )
 
     private fun DocumentSnapshot.toDebtTracker(): DebtTracker =
         DebtTracker(
-            startingAmount = double("startingAmount", 7000.0),
-            remainingAmount = double("remainingAmount", 7000.0),
-            monthlyAutoReduction = double("monthlyAutoReduction", 500.0),
+            startingAmount = double("startingAmount", 0.0),
+            remainingAmount = double("remainingAmount", 0.0),
+            monthlyAutoReduction = double("monthlyAutoReduction", 0.0),
+            lenderType = com.musab.niqdah.domain.finance.DebtLenderType.entries.firstOrNull {
+                it.name == getString("lenderType")
+            } ?: com.musab.niqdah.domain.finance.DebtLenderType.OTHER,
+            pressureLevel = com.musab.niqdah.domain.finance.DebtPressureLevel.entries.firstOrNull {
+                it.name == getString("pressureLevel")
+            } ?: com.musab.niqdah.domain.finance.DebtPressureLevel.FLEXIBLE,
+            dueDayOfMonth = (get("dueDayOfMonth") as? Number)?.toInt()?.coerceIn(1, 31),
             updatedAtMillis = long("updatedAtMillis")
         )
 

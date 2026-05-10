@@ -3,9 +3,12 @@ package com.musab.niqdah.domain.finance
 data class UserProfile(
     val uid: String,
     val currency: String = "AED",
-    val salary: Double = 5000.0,
-    val extraIncome: Double = 500.0,
-    val monthlySavingsTarget: Double = 1700.0,
+    val salary: Double = 0.0,
+    val extraIncome: Double = 0.0,
+    val monthlySavingsTarget: Double = 0.0,
+    val salaryDayOfMonth: Int = 1,
+    val onboardingCompleted: Boolean = false,
+    val primaryGoalId: String = "",
     val createdAtMillis: Long = 0L,
     val updatedAtMillis: Long = 0L
 )
@@ -62,14 +65,20 @@ data class SavingsGoal(
     val name: String,
     val targetAmount: Double,
     val savedAmount: Double = 0.0,
+    val targetDate: String = "",
+    val purpose: GoalPurpose = GoalPurpose.CUSTOM,
+    val isPrimary: Boolean = false,
     val createdAtMillis: Long = 0L,
     val updatedAtMillis: Long = 0L
 )
 
 data class DebtTracker(
-    val startingAmount: Double = 7000.0,
-    val remainingAmount: Double = 7000.0,
-    val monthlyAutoReduction: Double = 500.0,
+    val startingAmount: Double = 0.0,
+    val remainingAmount: Double = 0.0,
+    val monthlyAutoReduction: Double = 0.0,
+    val lenderType: DebtLenderType = DebtLenderType.OTHER,
+    val pressureLevel: DebtPressureLevel = DebtPressureLevel.FLEXIBLE,
+    val dueDayOfMonth: Int? = null,
     val updatedAtMillis: Long = 0L
 )
 
@@ -88,6 +97,7 @@ data class MonthlySnapshot(
 
 data class FinanceData(
     val profile: UserProfile,
+    val financialProfile: UserFinancialProfile? = null,
     val categories: List<BudgetCategory>,
     val transactions: List<ExpenseTransaction>,
     val incomeTransactions: List<IncomeTransaction>,
@@ -101,6 +111,13 @@ data class FinanceData(
     val reminderSettings: ReminderSettings = FinanceDefaults.reminderSettings(),
     val necessaryItems: List<NecessaryItem> = emptyList()
 ) {
+    val primaryGoal: SavingsGoal?
+        get() = goals.firstOrNull { it.isPrimary }
+            ?: profile.primaryGoalId.takeIf { it.isNotBlank() }?.let { id ->
+                goals.firstOrNull { it.id == id }
+            }
+            ?: goals.firstOrNull()
+
     val latestDailyUseBalance: AccountBalanceSnapshot?
         get() = latestBalance(AccountKind.DAILY_USE)
 
@@ -122,6 +139,7 @@ data class FinanceData(
         fun empty(uid: String = ""): FinanceData =
             FinanceData(
                 profile = FinanceDefaults.userProfile(uid),
+                financialProfile = null,
                 categories = emptyList(),
                 transactions = emptyList(),
                 incomeTransactions = emptyList(),
@@ -143,15 +161,15 @@ data class ReminderSettings(
     val monthlySavingsReminderDay: Int = 1,
     val monthlySavingsReminderHour: Int = 9,
     val monthlySavingsReminderMinute: Int = 0,
-    val monthlySavingsTargetAmount: Double = 1700.0,
+    val monthlySavingsTargetAmount: Double = 0.0,
     val isMissedSavingsReminderEnabled: Boolean = true,
     val missedSavingsCheckDay: Int = 20,
     val missedSavingsReminderHour: Int = 19,
     val missedSavingsReminderMinute: Int = 0,
     val areOverspendingWarningsEnabled: Boolean = true,
     val isAvoidCategoryWarningEnabled: Boolean = true,
-    val januaryTargetDate: String = "2027-01-01",
-    val januaryFundTargetAmount: Double = 13600.0,
+    val januaryTargetDate: String = "",
+    val januaryFundTargetAmount: Double = 0.0,
     val updatedAtMillis: Long = 0L
 )
 
@@ -396,6 +414,7 @@ data class NecessaryItemDue(
 
 data class JanuaryCountdownStatus(
     val targetDate: String,
+    val goalName: String = "Savings goal",
     val daysRemaining: Long,
     val monthsRemaining: Long,
     val currentSaved: Double,
@@ -425,7 +444,8 @@ data class DisciplineStatus(
                 avoidSpendingThisMonth = 0.0,
                 safeToSpendAmount = 0.0,
                 januaryCountdown = JanuaryCountdownStatus(
-                    targetDate = "2027-01-01",
+                    targetDate = "",
+                    goalName = "Savings goal",
                     daysRemaining = 0L,
                     monthsRemaining = 0L,
                     currentSaved = 0.0,
@@ -442,6 +462,8 @@ data class DashboardMetrics(
     val fixedReserveRemaining: Double,
     val remainingSafeToSpend: Double,
     val marriageFundProgress: Double,
+    val primaryGoalName: String,
+    val primaryGoalProgress: Double,
     val savingsTargetProgress: Double,
     val debtProgress: Double,
     val categorySpending: List<CategorySpend>,
@@ -449,4 +471,108 @@ data class DashboardMetrics(
     val healthSummary: String,
     val snapshot: MonthlySnapshot,
     val disciplineStatus: DisciplineStatus = DisciplineStatus.empty()
+)
+
+data class OnboardingState(
+    val controlFocus: GoalPurpose = GoalPurpose.GENERAL_BUDGETING,
+    val monthlyIncome: Double = 0.0,
+    val currency: String = FinanceDefaults.DEFAULT_CURRENCY,
+    val salaryDayOfMonth: Int = 1,
+    val fixedExpenses: List<FixedExpense> = FinanceDefaults.onboardingFixedExpenseTemplates(),
+    val debtProfile: DebtProfile = DebtProfile(),
+    val primarySavingsGoal: PrimarySavingsGoal? = null,
+    val preferences: UserPreferenceSetup = UserPreferenceSetup()
+)
+
+data class UserFinancialProfile(
+    val uid: String,
+    val controlFocus: GoalPurpose = GoalPurpose.GENERAL_BUDGETING,
+    val monthlyIncome: Double = 0.0,
+    val currency: String = FinanceDefaults.DEFAULT_CURRENCY,
+    val salaryDayOfMonth: Int = 1,
+    val fixedExpenses: List<FixedExpense> = emptyList(),
+    val debtProfile: DebtProfile = DebtProfile(),
+    val primarySavingsGoal: PrimarySavingsGoal? = null,
+    val preferences: UserPreferenceSetup = UserPreferenceSetup(),
+    val onboardingCompleted: Boolean = false,
+    val createdAtMillis: Long = 0L,
+    val updatedAtMillis: Long = 0L
+)
+
+data class FixedExpense(
+    val id: String,
+    val name: String,
+    val amount: Double = 0.0,
+    val dueDayOfMonth: Int = 1
+)
+
+data class DebtProfile(
+    val hasDebt: Boolean = false,
+    val totalDebtAmount: Double = 0.0,
+    val lenderType: DebtLenderType = DebtLenderType.OTHER,
+    val pressureLevel: DebtPressureLevel = DebtPressureLevel.FLEXIBLE,
+    val monthlyInstallmentAmount: Double = 0.0,
+    val dueDayOfMonth: Int? = null
+)
+
+enum class DebtLenderType(val label: String) {
+    FRIEND_FAMILY("Friend/family"),
+    BANK("Bank"),
+    CREDIT_CARD("Credit card"),
+    EMPLOYER("Employer"),
+    OTHER("Other")
+}
+
+enum class DebtPressureLevel(val label: String) {
+    FLEXIBLE("Flexible"),
+    FIXED_MONTHLY_PAYMENT("Fixed monthly payment"),
+    URGENT("Urgent")
+}
+
+enum class GoalPurpose(val label: String) {
+    SAVE_FOR_GOAL("Save for a goal"),
+    PAY_DEBT("Pay debt"),
+    CONTROL_DAILY_SPENDING("Control daily spending"),
+    MARRIAGE_FAMILY("Prepare for marriage/family"),
+    EMERGENCY_FUND("Build emergency fund"),
+    GENERAL_BUDGETING("General budgeting"),
+    CUSTOM("Custom")
+}
+
+data class PrimarySavingsGoal(
+    val name: String = "",
+    val purpose: GoalPurpose = GoalPurpose.CUSTOM,
+    val targetAmount: Double = 0.0,
+    val targetDate: String = "",
+    val monthlyTargetSuggestion: Double = 0.0
+)
+
+data class CategoryBudgetSetup(
+    val id: String,
+    val name: String,
+    val monthlyBudget: Double = 0.0,
+    val isEnabled: Boolean = true
+)
+
+data class UserPreferenceSetup(
+    val categoryBudgets: List<CategoryBudgetSetup> = FinanceDefaults.onboardingCategoryTemplates(),
+    val dailyUseBankSender: String = "",
+    val savingsBankSender: String = "",
+    val dailyUseAccountSuffix: String = "",
+    val savingsAccountSuffix: String = "",
+    val monthlySavingsReminderEnabled: Boolean = true,
+    val debtPaymentReminderEnabled: Boolean = true,
+    val overspendingWarningEnabled: Boolean = true,
+    val necessaryItemReminderEnabled: Boolean = true
+)
+
+data class OnboardingPlan(
+    val profile: UserProfile,
+    val financialProfile: UserFinancialProfile,
+    val categories: List<BudgetCategory>,
+    val goals: List<SavingsGoal>,
+    val debt: DebtTracker,
+    val bankMessageSettings: BankMessageParserSettings,
+    val reminderSettings: ReminderSettings,
+    val necessaryItems: List<NecessaryItem>
 )

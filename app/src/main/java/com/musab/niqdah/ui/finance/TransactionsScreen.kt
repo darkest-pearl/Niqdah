@@ -122,6 +122,28 @@ fun TransactionsScreen(
         if (uiState.isLoading) {
             item { LoadingStateCard(message = "Loading transactions and pending imports...") }
         }
+        if (pendingDisplayItems.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = "Pending imports",
+                    subtitle = "Review bank SMS drafts before they affect your plan."
+                )
+            }
+            items(pendingDisplayItems, key = { it.key }) { displayItem ->
+                PendingBankImportCard(
+                    displayItem = displayItem,
+                    reminderThresholdMinutes = uiState.data.bankMessageSettings.internalTransferReminderThresholdMinutes,
+                    categories = categories,
+                    isSaving = uiState.isSaving,
+                    onSave = onSavePendingBankImport,
+                    onUpdate = onUpdatePendingBankImport,
+                    onDismiss = onDismissPendingBankImport
+                )
+            }
+        }
+        item {
+            SectionHeader(title = "Quick add")
+        }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -165,22 +187,7 @@ fun TransactionsScreen(
                 onSaveImportedBankMessage = onSaveImportedBankMessage
             )
         }
-        if (pendingDisplayItems.isNotEmpty()) {
-            item {
-                Text(text = "Pending bank imports", style = MaterialTheme.typography.titleLarge)
-            }
-            items(pendingDisplayItems, key = { it.key }) { displayItem ->
-                PendingBankImportCard(
-                    displayItem = displayItem,
-                    reminderThresholdMinutes = uiState.data.bankMessageSettings.internalTransferReminderThresholdMinutes,
-                    categories = categories,
-                    isSaving = uiState.isSaving,
-                    onSave = onSavePendingBankImport,
-                    onUpdate = onUpdatePendingBankImport,
-                    onDismiss = onDismissPendingBankImport
-                )
-            }
-        }
+        item { SectionHeader(title = "History") }
 
         if (timelineItems.isEmpty()) {
             item {

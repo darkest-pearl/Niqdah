@@ -9,7 +9,11 @@ class FinanceCalculatorTest {
         val categories = FinanceDefaults.budgetCategories(now = 0L)
         val occurredAt = FinanceDates.parseDateInput("2026-05-08") ?: error("Invalid test date")
         val data = FinanceData(
-            profile = FinanceDefaults.userProfile(uid = "uid", now = 0L),
+            profile = FinanceDefaults.userProfile(uid = "uid", now = 0L).copy(
+                salary = 5_000.0,
+                monthlySavingsTarget = 1_700.0,
+                onboardingCompleted = true
+            ),
             categories = categories,
             transactions = listOf(
                 ExpenseTransaction(
@@ -22,7 +26,7 @@ class FinanceCalculatorTest {
                 ),
                 ExpenseTransaction(
                     id = "savings",
-                    categoryId = FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID,
+                    categoryId = FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID,
                     amount = 1_700.0,
                     currency = "AED",
                     occurredAtMillis = occurredAt,
@@ -36,7 +40,10 @@ class FinanceCalculatorTest {
             merchantRules = emptyList(),
             goals = FinanceDefaults.savingsGoals(now = 0L),
             debt = FinanceDefaults.debtTracker(now = 0L),
-            bankMessageSettings = FinanceDefaults.bankMessageParserSettings()
+            bankMessageSettings = FinanceDefaults.bankMessageParserSettings(),
+            reminderSettings = FinanceDefaults.reminderSettings(now = 0L).copy(
+                monthlySavingsTargetAmount = 1_700.0
+            )
         )
 
         val dashboard = FinanceCalculator.dashboard(data, yearMonth = "2026-05", now = 0L)

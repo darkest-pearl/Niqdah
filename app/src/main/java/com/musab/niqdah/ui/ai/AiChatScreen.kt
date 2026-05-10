@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -88,10 +89,16 @@ fun AiChatScreen(
             item {
                 FinanceHeader(
                     title = "AI Chat",
-                    subtitle = "Ask for purchase checks, budget adjustments, and marriage-plan guidance."
+                    subtitle = "Ask for purchase checks, budget adjustments, and monthly focus."
                 )
             }
             item { ErrorBanner(message = chatUiState.errorMessage, onDismiss = onClearError) }
+            item {
+                SuggestedPrompts(
+                    enabled = !chatUiState.isSending,
+                    onPrompt = { prompt -> onSendMessage(prompt, financeUiState) }
+                )
+            }
             items(chatUiState.messages, key = { it.id }) { message ->
                 ChatBubble(message = message)
                 chatUiState.draftActions[message.id]?.let { draftAction ->
@@ -171,6 +178,39 @@ fun AiChatScreen(
                         imageVector = Icons.AutoMirrored.Rounded.Send,
                         contentDescription = "Send message"
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SuggestedPrompts(enabled: Boolean, onPrompt: (String) -> Unit) {
+    val prompts = listOf(
+        "Can I buy this?",
+        "What should I focus on this month?",
+        "Summarize my spending",
+        "Am I on track?"
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Suggested prompts",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        prompts.chunked(2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                row.forEach { prompt ->
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        enabled = enabled,
+                        onClick = { onPrompt(prompt) }
+                    ) {
+                        Text(prompt, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                if (row.size == 1) {
+                    Spacer(modifier = Modifier.weight(1f))
                 }
             }
         }

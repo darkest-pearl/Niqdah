@@ -6,7 +6,7 @@ Create the Android app foundation with Kotlin, Jetpack Compose, Material 3, Fire
 
 ## Phase 2 Manual Finance Engine
 
-Add manual transaction entry, categories, fixed expense setup, dashboard calculations, marriage fund progress, debt progress, savings envelopes, editable profile settings, and persistent Firestore data models. Complete for the first manual version.
+Add manual transaction entry, categories, fixed expense setup, dashboard calculations, primary goal progress, debt progress, savings envelopes, editable profile settings, and persistent Firestore data models. Complete for the first manual version.
 
 ## Phase 3 AI Chat Backend
 
@@ -36,13 +36,13 @@ Add personal financial discipline reminders and warning systems. Complete for th
 
 Included:
 
-- Monthly marriage savings transfer reminder with editable day, time, and target amount.
+- Monthly savings transfer reminder with editable day, time, and target amount.
 - Missed savings reminder that gently reports the current shortfall after a configured check day.
 - Overspending warnings for variable categories at 75%, 100%, and over 100% of budget.
 - Avoid-category warning after save without shame wording.
 - Necessary items list with optional amount, due day/date, monthly or one-time recurrence, pending/done/skipped status, and notification toggle.
-- Dashboard discipline card and January countdown card with editable target date and total fund target.
-- AI Chat context includes savings progress, overspent categories, necessary items due, safe-to-spend, and January countdown status.
+- Dashboard discipline card and goal countdown card with editable target date and total fund target.
+- AI Chat context includes savings progress, overspent categories, necessary items due, safe-to-spend, and goal countdown status.
 
 Notification behavior uses WorkManager local checks and posts only when `POST_NOTIFICATIONS` is already granted. Privacy constraints remain unchanged: no `READ_SMS`, no SMS content sent to OpenAI, no backend SMS access, no OpenAI API key in the Android app, and no reminder creation by AI without explicit app UI support.
 
@@ -51,3 +51,19 @@ Notification behavior uses WorkManager local checks and posts only when `POST_NO
 Refine UI consistency, save feedback, privacy notes, setup checklist, notification channels, Firebase security rules, personal APK release docs, and QA coverage. Complete for personal/dev APK preparation, not Play Store submission.
 
 Privacy constraints remain unchanged and are tightened in AI Chat: no `READ_SMS`, no raw automatic SMS body persisted to Firestore, no SMS content sent to OpenAI/backend, no OpenAI API key in the Android app, and no backend SMS access. Bank-like SMS text pasted into AI Chat is kept local and replaced with a parsed summary before backend calls.
+
+## Phase 7A Personalized Premium App
+
+Transform Niqdah from a hardcoded personal MVP into a personalized premium finance app. In progress/completed for the first implementation pass.
+
+Included:
+
+- Neutral first sign-in defaults with `onboardingCompleted = false`.
+- Story-style onboarding for control focus, income, fixed costs, debt, primary goal, categories, bank SMS sender setup, reminders, and plan confirmation.
+- Existing-plan migration screen that preserves old data and marks setup complete.
+- User-specific goal names and goal countdowns instead of universal marriage/January wording.
+- Premium shared UI primitives, calmer color system, improved dashboard hierarchy, suggested AI prompts, and cleaner goal/transaction section ordering.
+- Splash theme and adaptive vector icon placeholder using a coin-and-shield mark.
+- Unit tests for onboarding required behavior, onboarding plan writes, debt branching, monthly target calculation, neutral defaults, existing data preservation, and SMS privacy defaults.
+
+Privacy constraints remain unchanged: no `READ_SMS`, no SMS content sent to OpenAI/backend, no backend SMS access, no OpenAI API key in the Android app, and no automatic save of raw SMS without review.

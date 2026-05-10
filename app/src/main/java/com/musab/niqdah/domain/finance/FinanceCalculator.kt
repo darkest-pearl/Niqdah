@@ -36,11 +36,12 @@ object FinanceCalculator {
             monthlySavingsTarget -
             data.debt.monthlyAutoReduction
 
-        val marriageGoal = data.goals.firstOrNull { it.id == FinanceDefaults.MARRIAGE_GOAL_ID }
-        val marriageSaved = marriageGoal?.savedAmount ?: 0.0
-        val marriageTarget = data.reminderSettings.januaryFundTargetAmount.takeIf { it > 0.0 }
-            ?: marriageGoal?.targetAmount
-            ?: FinanceDefaults.DEFAULT_MARRIAGE_FUND_TARGET
+        val primaryGoal = data.primaryGoal
+        val primaryGoalName = primaryGoal?.name ?: "Savings goal"
+        val primarySaved = primaryGoal?.savedAmount ?: 0.0
+        val primaryTarget = data.reminderSettings.januaryFundTargetAmount.takeIf { it > 0.0 }
+            ?: primaryGoal?.targetAmount
+            ?: 0.0
         val savingsThisMonth = monthTransactions
             .filter { transaction -> categoryById[transaction.categoryId]?.type == CategoryType.SAVINGS }
             .sumOf { it.amount }
@@ -59,8 +60,8 @@ object FinanceCalculator {
             totalIncome = totalIncome,
             totalSpent = totalSpent,
             remainingSafeToSpend = remainingSafeToSpend,
-            marriageFundSaved = marriageSaved,
-            marriageFundTarget = marriageTarget,
+            marriageFundSaved = primarySaved,
+            marriageFundTarget = primaryTarget,
             debtRemaining = data.debt.remainingAmount,
             debtStarting = data.debt.startingAmount,
             healthSummary = healthSummary,
@@ -72,7 +73,9 @@ object FinanceCalculator {
             totalSpent = totalSpent,
             fixedReserveRemaining = fixedReserveRemaining,
             remainingSafeToSpend = remainingSafeToSpend,
-            marriageFundProgress = ratio(marriageSaved, marriageTarget),
+            marriageFundProgress = ratio(primarySaved, primaryTarget),
+            primaryGoalName = primaryGoalName,
+            primaryGoalProgress = ratio(primarySaved, primaryTarget),
             savingsTargetProgress = ratio(savingsThisMonth, monthlySavingsTarget),
             debtProgress = debtProgress,
             categorySpending = categorySpending,

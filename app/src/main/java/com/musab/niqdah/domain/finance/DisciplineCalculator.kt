@@ -18,11 +18,11 @@ object DisciplineCalculator {
         val today = Instant.ofEpochMilli(nowMillis).atZone(ZoneId.systemDefault()).toLocalDate()
         val savingsTarget = savingsTargetStatus(data, yearMonth)
         val categorySpending = categorySpending(data, yearMonth)
-        val marriageGoal = data.goals.firstOrNull { it.id == FinanceDefaults.MARRIAGE_GOAL_ID }
-        val currentSaved = marriageGoal?.savedAmount ?: 0.0
+        val primaryGoal = data.primaryGoal
+        val currentSaved = primaryGoal?.savedAmount ?: 0.0
         val targetAmount = data.reminderSettings.januaryFundTargetAmount.takeIf { it > 0.0 }
-            ?: marriageGoal?.targetAmount
-            ?: FinanceDefaults.DEFAULT_MARRIAGE_FUND_TARGET
+            ?: primaryGoal?.targetAmount
+            ?: 0.0
 
         return DisciplineStatus(
             savingsTarget = savingsTarget,
@@ -32,6 +32,7 @@ object DisciplineCalculator {
             safeToSpendAmount = safeToSpend(data, yearMonth, savingsTarget.targetAmount),
             januaryCountdown = januaryCountdown(
                 targetDateInput = data.reminderSettings.januaryTargetDate,
+                goalName = primaryGoal?.name ?: "Savings goal",
                 currentSaved = currentSaved,
                 targetAmount = targetAmount,
                 today = today
@@ -127,12 +128,13 @@ object DisciplineCalculator {
 
     fun januaryCountdown(
         targetDateInput: String,
+        goalName: String = "Savings goal",
         currentSaved: Double,
         targetAmount: Double,
         today: LocalDate
     ): JanuaryCountdownStatus {
         val targetDate = runCatching { LocalDate.parse(targetDateInput) }
-            .getOrElse { LocalDate.parse(FinanceDefaults.DEFAULT_JANUARY_TARGET_DATE) }
+            .getOrElse { today }
         val daysRemaining = max(0L, ChronoUnit.DAYS.between(today, targetDate))
         val monthsRemaining = monthsRemainingForSavings(today, targetDate)
         val remainingAmount = max(0.0, targetAmount - currentSaved)
@@ -144,6 +146,7 @@ object DisciplineCalculator {
 
         return JanuaryCountdownStatus(
             targetDate = targetDate.toString(),
+            goalName = goalName.ifBlank { "Savings goal" },
             daysRemaining = daysRemaining,
             monthsRemaining = monthsRemaining,
             currentSaved = currentSaved,

@@ -33,6 +33,7 @@ fun DashboardScreen(
 ) {
     val currency = uiState.data.profile.currency
     val dashboard = uiState.dashboard
+    val primaryGoal = uiState.data.primaryGoal
 
     LazyColumn(
         modifier = Modifier
@@ -43,7 +44,7 @@ fun DashboardScreen(
     ) {
         item {
             FinanceHeader(
-                title = "Dashboard",
+                title = "Your money control room",
                 subtitle = "Current month plan, spending pressure, savings, and debt."
             )
         }
@@ -55,72 +56,33 @@ fun DashboardScreen(
             }
         } else {
             item {
-                FinanceMetricCard(
-                    title = "Daily-use account balance",
-                    value = uiState.data.latestDailyUseBalance?.let {
-                        formatMoney(it.availableBalance, it.currency)
-                    } ?: "Not known yet",
-                    subtitle = uiState.data.latestDailyUseBalance?.let {
-                        "Last update ${formatTransactionDateTime(it.messageTimestampMillis)} from ${it.sender.ifBlank { "bank SMS" }}."
-                    } ?: "Niqdah will show this after a reviewed bank SMS includes an available balance."
+                PlanSummaryCard(uiState = uiState)
+            }
+            item {
+                FinanceProgressCard(
+                    title = primaryGoal?.name ?: "Savings goal",
+                    value = formatProgress(dashboard.primaryGoalProgress),
+                    progress = dashboard.primaryGoalProgress,
+                    subtitle = primaryGoal?.let {
+                        "${formatMoney(it.savedAmount, currency)} saved of ${formatMoney(it.targetAmount, currency)}."
+                    } ?: "Create a primary goal in onboarding or settings to track progress here."
                 )
             }
             item {
                 FinanceMetricCard(
-                    title = "Savings account balance",
-                    value = uiState.data.latestSavingsBalance?.let {
-                        formatMoney(it.availableBalance, it.currency)
-                    } ?: "Not known yet",
-                    subtitle = uiState.data.latestSavingsBalance?.let {
-                        "Last update ${formatTransactionDateTime(it.messageTimestampMillis)} from ${it.sender.ifBlank { "bank SMS" }}."
-                    } ?: "Savings balance will appear after a savings bank message includes an available balance."
-                )
-            }
-            item {
-                FinanceMetricCard(
-                    title = "Last balance update",
-                    value = uiState.data.lastBalanceUpdateMillis.takeIf { it > 0L }?.let {
-                        formatTransactionDateTime(it)
-                    } ?: "No balance updates",
-                    subtitle = "Balance snapshots are parsed from bank SMS summaries only."
-                )
-            }
-            item {
-                FinanceMetricCard(
-                    title = "Total monthly income",
-                    value = formatMoney(dashboard.totalMonthlyIncome, currency),
-                    subtitle = "Profile income plus imported credits."
-                )
-            }
-            item {
-                FinanceMetricCard(
-                    title = "Total spent",
-                    value = formatMoney(dashboard.totalSpent, currency),
-                    subtitle = "Expense transactions this month, excluding savings transfers."
-                )
-            }
-            item {
-                FinanceMetricCard(
-                    title = "Remaining safe-to-spend",
+                    title = "Safe to spend",
                     value = formatMoney(dashboard.remainingSafeToSpend, currency),
                     subtitle = "After spending, fixed reserves, savings target, and debt reduction."
                 )
             }
             item {
-                FinanceProgressCard(
-                    title = "Marriage fund progress",
-                    value = formatProgress(dashboard.marriageFundProgress),
-                    progress = dashboard.marriageFundProgress,
-                    subtitle = "Progress toward the January marriage target."
+                SectionHeader(
+                    title = "Account balances",
+                    subtitle = "Updated only from reviewed bank SMS summaries."
                 )
             }
             item {
-                FinanceProgressCard(
-                    title = "Savings target progress",
-                    value = formatProgress(dashboard.savingsTargetProgress),
-                    progress = dashboard.savingsTargetProgress,
-                    subtitle = "This month against the ${formatMoney(dashboard.disciplineStatus.savingsTarget.targetAmount, currency)} savings target."
-                )
+                AccountBalancesCard(uiState = uiState)
             }
             item {
                 DisciplineCard(
@@ -129,7 +91,7 @@ fun DashboardScreen(
                 )
             }
             item {
-                JanuaryCountdownCard(
+                GoalCountdownCard(
                     disciplineStatus = dashboard.disciplineStatus,
                     currency = currency
                 )
@@ -143,14 +105,24 @@ fun DashboardScreen(
                 )
             }
             item {
+                FinanceProgressCard(
+                    title = "Savings target progress",
+                    value = formatProgress(dashboard.savingsTargetProgress),
+                    progress = dashboard.savingsTargetProgress,
+                    subtitle = "This month against the ${formatMoney(dashboard.disciplineStatus.savingsTarget.targetAmount, currency)} savings target."
+                )
+            }
+            item {
                 HealthSummaryCard(summary = dashboard.healthSummary)
             }
             item {
-                Text(
-                    text = "Category alerts",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
+                RecentActivityCard(uiState = uiState)
+            }
+            item {
+                NecessaryRemindersCard(disciplineStatus = dashboard.disciplineStatus)
+            }
+            item {
+                SectionHeader(title = "Category alerts")
             }
             if (dashboard.overspendingAlerts.isEmpty()) {
                 item {
@@ -168,6 +140,64 @@ fun DashboardScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PlanSummaryCard(uiState: FinanceUiState) {
+    val currency = uiState.data.profile.currency
+    val dashboard = uiState.dashboard
+    PremiumCard(containerColor = MaterialTheme.colorScheme.primaryContainer) {
+        Text(
+            text = "This month",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer
+        )
+        Text(
+            text = dashboard.healthSummary,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            style = MaterialTheme.typography.bodyLarge
+        )
+        DisciplineLine(
+            label = "Income",
+            value = formatMoney(dashboard.totalMonthlyIncome, currency)
+        )
+        DisciplineLine(
+            label = "Spent",
+            value = formatMoney(dashboard.totalSpent, currency)
+        )
+    }
+}
+
+@Composable
+private fun AccountBalancesCard(uiState: FinanceUiState) {
+    PremiumCard {
+        DisciplineLine(
+            label = "Daily-use",
+            value = uiState.data.latestDailyUseBalance?.let {
+                formatMoney(it.availableBalance, it.currency)
+            } ?: "Not known yet"
+        )
+        Text(
+            text = uiState.data.latestDailyUseBalance?.let {
+                "Last update ${formatTransactionDateTime(it.messageTimestampMillis)} from ${it.sender.ifBlank { "bank SMS" }}."
+            } ?: "Niqdah shows this after a reviewed bank SMS includes an available balance.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium
+        )
+        DisciplineLine(
+            label = "Savings",
+            value = uiState.data.latestSavingsBalance?.let {
+                formatMoney(it.availableBalance, it.currency)
+            } ?: "Not known yet"
+        )
+        Text(
+            text = uiState.data.latestSavingsBalance?.let {
+                "Last update ${formatTransactionDateTime(it.messageTimestampMillis)} from ${it.sender.ifBlank { "bank SMS" }}."
+            } ?: "Savings balance appears after a savings bank message includes an available balance.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium
+        )
     }
 }
 
@@ -220,18 +250,60 @@ private fun DisciplineCard(
 }
 
 @Composable
-private fun JanuaryCountdownCard(
+private fun GoalCountdownCard(
     disciplineStatus: DisciplineStatus,
     currency: String
 ) {
     val countdown = disciplineStatus.januaryCountdown
     FinanceMetricCard(
-        title = "January countdown",
+        title = "${countdown.goalName} countdown",
         value = "${countdown.monthsRemaining} months / ${countdown.daysRemaining} days",
         subtitle = "Saved ${formatMoney(countdown.currentSaved, currency)} of ${
             formatMoney(countdown.targetAmount, currency)
         }. Required monthly savings: ${formatMoney(countdown.requiredMonthlySavings, currency)}."
     )
+}
+
+@Composable
+private fun RecentActivityCard(uiState: FinanceUiState) {
+    val currency = uiState.data.profile.currency
+    val recent = (
+        uiState.data.transactions.map { "${formatMoney(it.amount, it.currency.ifBlank { currency })} - ${it.note.ifBlank { "Expense" }}" to it.occurredAtMillis } +
+            uiState.data.incomeTransactions.map { "${formatMoney(it.amount, it.currency.ifBlank { currency })} - ${it.source.ifBlank { "Income" }}" to it.occurredAtMillis }
+        )
+        .sortedByDescending { it.second }
+        .take(3)
+    if (recent.isEmpty()) {
+        EmptyStateCard(
+            title = "No recent activity",
+            body = "Manual expenses, reviewed SMS imports, and income records will appear here."
+        )
+        return
+    }
+    PremiumCard {
+        SectionHeader(title = "Recent activity")
+        recent.forEach { item ->
+            Text(text = item.first, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun NecessaryRemindersCard(disciplineStatus: DisciplineStatus) {
+    if (disciplineStatus.necessaryItemsDueSoon.isEmpty()) {
+        EmptyStateCard(
+            title = "No necessary reminders due soon",
+            body = "Fixed costs and important reminders will show here when they are close."
+        )
+        return
+    }
+    PremiumCard {
+        SectionHeader(title = "Necessary reminders")
+        Text(
+            text = dueSummary(disciplineStatus.necessaryItemsDueSoon),
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
 }
 
 @Composable

@@ -32,6 +32,7 @@ import com.musab.niqdah.ui.ai.AiChatViewModel
 import com.musab.niqdah.ui.auth.AuthRoute
 import com.musab.niqdah.ui.auth.AuthViewModel
 import com.musab.niqdah.ui.finance.FinanceViewModel
+import com.musab.niqdah.ui.onboarding.OnboardingRoute
 import com.musab.niqdah.ui.shell.MainShell
 
 @Composable
@@ -64,22 +65,31 @@ fun NiqdahApp(openTransactionsRequest: Int = 0) {
                 factory = FinanceViewModel.Factory(financeRepository, reminderScheduler)
             )
             val financeUiState by financeViewModel.uiState.collectAsStateWithLifecycle()
-            val aiChatRepository = remember(context) { FirebaseAiChatRepository(context) }
-            val aiChatViewModel: AiChatViewModel = viewModel(
-                key = "ai-chat-${authState.uid}",
-                factory = AiChatViewModel.Factory(aiChatRepository)
-            )
-            val aiChatUiState by aiChatViewModel.uiState.collectAsStateWithLifecycle()
+            if (financeUiState.requiresOnboarding) {
+                OnboardingRoute(
+                    uiState = financeUiState,
+                    onComplete = financeViewModel::completeOnboarding,
+                    onKeepExistingPlan = financeViewModel::keepExistingPlan,
+                    onClearError = financeViewModel::clearError
+                )
+            } else {
+                val aiChatRepository = remember(context) { FirebaseAiChatRepository(context) }
+                val aiChatViewModel: AiChatViewModel = viewModel(
+                    key = "ai-chat-${authState.uid}",
+                    factory = AiChatViewModel.Factory(aiChatRepository)
+                )
+                val aiChatUiState by aiChatViewModel.uiState.collectAsStateWithLifecycle()
 
-            MainShell(
-                userEmail = authState.email,
-                financeUiState = financeUiState,
-                financeViewModel = financeViewModel,
-                aiChatUiState = aiChatUiState,
-                aiChatViewModel = aiChatViewModel,
-                openTransactionsRequest = openTransactionsRequest,
-                onLogout = authViewModel::signOut
-            )
+                MainShell(
+                    userEmail = authState.email,
+                    financeUiState = financeUiState,
+                    financeViewModel = financeViewModel,
+                    aiChatUiState = aiChatUiState,
+                    aiChatViewModel = aiChatViewModel,
+                    openTransactionsRequest = openTransactionsRequest,
+                    onLogout = authViewModel::signOut
+                )
+            }
         }
     }
 }
