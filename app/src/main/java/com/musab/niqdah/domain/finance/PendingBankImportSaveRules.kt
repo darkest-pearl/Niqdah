@@ -111,6 +111,9 @@ object PendingBankImportSaveRules {
     fun pairedInternalTransferSavedMessage(): String =
         "Paired internal transfer saved. Savings contribution recorded."
 
+    fun saveButtonLabel(isSaving: Boolean): String =
+        if (isSaving) "Saving..." else "Save"
+
     fun savingsTransferSavedMessage(pendingImport: PendingBankImport): String =
         if (pendingImport.availableBalance == null) {
             "Savings transfer saved. Debit side was not found."

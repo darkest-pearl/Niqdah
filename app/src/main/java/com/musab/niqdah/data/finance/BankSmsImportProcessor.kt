@@ -10,6 +10,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.google.android.gms.tasks.Task
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
@@ -29,10 +33,14 @@ import com.musab.niqdah.domain.finance.BankMessageSourceSettings
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.CategoryType
 import com.musab.niqdah.domain.finance.FinanceDefaults
+import com.musab.niqdah.domain.finance.InternalTransferNotificationRules
+import com.musab.niqdah.domain.finance.InternalTransferNotificationState
 import com.musab.niqdah.domain.finance.MerchantRule
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
+import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import java.util.Locale
@@ -134,7 +142,29 @@ class BankSmsImportProcessor(
             )
             .awaitValue()
         updateSmsStatus(db, mapOf("lastParsedBankMessageAtMillis" to receivedAtMillis))
-        showReviewNotification(pendingImport)
+        val pendingImports = fetchPendingBankImports(db)
+        val pairedImport = PendingBankImportSaveRules.findMatchingTransferCounterpart(pendingImport, pendingImports)
+        val internalTransferPlan = InternalTransferNotificationRules.notificationPlan(
+            pendingImport = pendingImport,
+            candidates = pendingImports,
+            nowMillis = now,
+            reminderThresholdMinutes = settings.internalTransferReminderThresholdMinutes
+        )
+        if (internalTransferPlan != null) {
+            InternalTransferNotificationPublisher.show(appContext, internalTransferPlan)
+            cancelReviewNotification(pendingImport.id)
+            pairedImport?.let { cancelReviewNotification(it.id) }
+            if (internalTransferPlan.state == InternalTransferNotificationState.WAITING &&
+                settings.isInternalTransferReminderEnabled
+            ) {
+                scheduleInternalTransferReminder(
+                    pendingImport = pendingImport,
+                    thresholdMinutes = settings.internalTransferReminderThresholdMinutes
+                )
+            }
+        } else {
+            showReviewNotification(pendingImport)
+        }
         return SmsImportProcessResult.PendingCreated
     }
 
@@ -160,6 +190,11 @@ class BankSmsImportProcessor(
             savingsAccountSuffix = snapshot.getString("savingsAccountSuffix") ?: defaults.savingsAccountSuffix,
             isMerchantLearningEnabled = snapshot.getBoolean("isMerchantLearningEnabled")
                 ?: defaults.isMerchantLearningEnabled,
+            isInternalTransferReminderEnabled = snapshot.getBoolean("isInternalTransferReminderEnabled")
+                ?: defaults.isInternalTransferReminderEnabled,
+            internalTransferReminderThresholdMinutes =
+                ((snapshot.get("internalTransferReminderThresholdMinutes") as? Number)?.toInt()
+                    ?: defaults.internalTransferReminderThresholdMinutes).coerceIn(1, 24 * 60),
             lastIgnoredSender = snapshot.getString("lastIgnoredSender") ?: "",
             lastParsedBankMessageAtMillis =
                 (snapshot.get("lastParsedBankMessageAtMillis") as? Number)?.toLong() ?: 0L,
@@ -227,6 +262,75 @@ class BankSmsImportProcessor(
                     timesConfirmed = ((snapshot.get("timesConfirmed") as? Number)?.toInt() ?: 1).coerceAtLeast(1)
                 )
             }
+
+    private suspend fun fetchPendingBankImports(db: FirebaseFirestore): List<PendingBankImport> =
+        pendingBankImportsCollection(db)
+            .get()
+            .awaitValue()
+            .documents
+            .map { snapshot ->
+                PendingBankImport(
+                    id = snapshot.id,
+                    messageHash = snapshot.getString("messageHash") ?: snapshot.id,
+                    senderName = snapshot.getString("senderName") ?: "",
+                    rawMessage = snapshot.getString("rawMessage") ?: "",
+                    sourceType = BankMessageSourceType.entries.firstOrNull {
+                        it.name == snapshot.getString("sourceType")
+                    } ?: BankMessageSourceType.UNKNOWN,
+                    type = ParsedBankMessageType.entries.firstOrNull {
+                        it.name == snapshot.getString("type")
+                    } ?: ParsedBankMessageType.UNKNOWN,
+                    amount = (snapshot.get("amount") as? Number)?.toDouble(),
+                    currency = snapshot.getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
+                    availableBalance = (snapshot.get("availableBalance") as? Number)?.toDouble(),
+                    availableBalanceCurrency = snapshot.getString("availableBalanceCurrency")
+                        ?: FinanceDefaults.DEFAULT_CURRENCY,
+                    originalForeignAmount = (snapshot.get("originalForeignAmount") as? Number)?.toDouble(),
+                    originalForeignCurrency = snapshot.getString("originalForeignCurrency") ?: "",
+                    inferredAccountDebit = (snapshot.get("inferredAccountDebit") as? Number)?.toDouble(),
+                    isAmountInferredFromBalance = snapshot.getBoolean("isAmountInferredFromBalance") ?: false,
+                    reviewNote = snapshot.getString("reviewNote") ?: "",
+                    merchantName = snapshot.getString("merchantName") ?: "",
+                    sourceAccountSuffix = snapshot.getString("sourceAccountSuffix") ?: "",
+                    targetAccountSuffix = snapshot.getString("targetAccountSuffix") ?: "",
+                    ignoredReason = snapshot.getString("ignoredReason") ?: "",
+                    pairedTransferStatus = snapshot.getString("pairedTransferStatus") ?: "",
+                    description = snapshot.getString("description") ?: "",
+                    occurredAtMillis = (snapshot.get("occurredAtMillis") as? Number)?.toLong() ?: 0L,
+                    suggestedCategoryId = snapshot.getString("suggestedCategoryId"),
+                    suggestedCategoryName = snapshot.getString("suggestedCategoryName") ?: "Uncategorized",
+                    suggestedNecessity = com.musab.niqdah.domain.finance.NecessityLevel.entries.firstOrNull {
+                        it.name == snapshot.getString("suggestedNecessity")
+                    } ?: com.musab.niqdah.domain.finance.NecessityLevel.NECESSARY,
+                    confidence = com.musab.niqdah.domain.finance.ParsedBankMessageConfidence.entries.firstOrNull {
+                        it.name == snapshot.getString("confidence")
+                    } ?: com.musab.niqdah.domain.finance.ParsedBankMessageConfidence.LOW,
+                    receivedAtMillis = (snapshot.get("receivedAtMillis") as? Number)?.toLong() ?: 0L,
+                    createdAtMillis = (snapshot.get("createdAtMillis") as? Number)?.toLong() ?: 0L,
+                    updatedAtMillis = (snapshot.get("updatedAtMillis") as? Number)?.toLong() ?: 0L
+                )
+            }
+
+    private fun scheduleInternalTransferReminder(
+        pendingImport: PendingBankImport,
+        thresholdMinutes: Int
+    ) {
+        val request = OneTimeWorkRequestBuilder<InternalTransferReminderWorker>()
+            .setInitialDelay(thresholdMinutes.toLong().coerceAtLeast(1L), TimeUnit.MINUTES)
+            .setInputData(
+                workDataOf(
+                    InternalTransferReminderWorker.KEY_UID to uid,
+                    InternalTransferReminderWorker.KEY_IMPORT_ID to pendingImport.id,
+                    InternalTransferReminderWorker.KEY_THRESHOLD_MINUTES to thresholdMinutes
+                )
+            )
+            .build()
+        WorkManager.getInstance(appContext).enqueueUniqueWork(
+            InternalTransferReminderWorker.workName(pendingImport.id),
+            ExistingWorkPolicy.REPLACE,
+            request
+        )
+    }
 
     private suspend fun hasSavedMatchingRecord(
         db: FirebaseFirestore,
@@ -326,6 +430,12 @@ class BankSmsImportProcessor(
         }
     }
 
+    private fun cancelReviewNotification(importId: String) {
+        runCatching {
+            appContext.getSystemService(NotificationManager::class.java).cancel(importId.hashCode())
+        }
+    }
+
     private suspend fun updateSmsStatus(db: FirebaseFirestore, updates: Map<String, Any>) {
         financeCollection(db)
             .document("bankMessageSettings")
@@ -378,7 +488,7 @@ class BankSmsImportProcessor(
         mapOf(
             "messageHash" to messageHash,
             "senderName" to senderName,
-            "rawMessage" to rawMessage,
+            "rawMessage" to "",
             "sourceType" to sourceType.name,
             "type" to type.name,
             "amount" to amount,

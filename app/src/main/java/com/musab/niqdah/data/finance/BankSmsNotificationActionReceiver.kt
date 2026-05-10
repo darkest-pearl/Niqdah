@@ -28,6 +28,7 @@ import com.musab.niqdah.domain.finance.FinanceDates
 import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.InternalTransferRecord
+import com.musab.niqdah.domain.finance.InternalTransferNotificationRules
 import com.musab.niqdah.domain.finance.NecessityLevel
 import com.musab.niqdah.domain.finance.ParsedBankMessageConfidence
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
@@ -112,6 +113,11 @@ private class PendingBankImportNotificationHandler(
 
         val now = System.currentTimeMillis()
         val paired = findTransferCounterpart(db, pendingImport)
+        val notificationPlan = InternalTransferNotificationRules.notificationPlan(
+            pendingImport = pendingImport,
+            candidates = listOfNotNull(pendingImport, paired),
+            nowMillis = now
+        )
         val isPairedTransfer = PendingBankImportSaveRules.isMatchedInternalTransferPair(pendingImport, paired)
         try {
             when (pendingImport.type) {
@@ -176,6 +182,9 @@ private class PendingBankImportNotificationHandler(
                 ).toFirestore()
             )
             .awaitValue()
+        notificationPlan?.let { InternalTransferNotificationPublisher.cancel(appContext, it.notificationId) }
+        appContext.cancelImportNotification(pendingImport.id)
+        paired?.let { appContext.cancelImportNotification(it.id) }
         return SaveResult.Saved(pendingImport.saveSuccessMessage(db, paired))
     }
 
@@ -188,7 +197,15 @@ private class PendingBankImportNotificationHandler(
             .toPendingBankImport()
             ?: return false
         val now = System.currentTimeMillis()
-        pendingBankImportsCollection(db).document(pendingImport.id).delete().awaitValue()
+        val paired = findTransferCounterpart(db, pendingImport)
+        val notificationPlan = InternalTransferNotificationRules.notificationPlan(
+            pendingImport = pendingImport,
+            candidates = listOfNotNull(pendingImport, paired),
+            nowMillis = now
+        )
+        PendingBankImportSaveRules.idsToRemoveAfterSuccessfulSave(pendingImport, paired).forEach { id ->
+            pendingBankImportsCollection(db).document(id).delete().awaitValue()
+        }
         bankMessageImportHistoryCollection(db)
             .document(pendingImport.messageHash)
             .set(
@@ -200,6 +217,22 @@ private class PendingBankImportNotificationHandler(
                 ).toFirestore()
             )
             .awaitValue()
+        if (paired != null) {
+            bankMessageImportHistoryCollection(db)
+                .document(paired.messageHash)
+                .set(
+                    BankMessageImportHistory(
+                        messageHash = paired.messageHash,
+                        status = BankMessageImportStatus.DISMISSED,
+                        senderName = paired.senderName,
+                        updatedAtMillis = now
+                    ).toFirestore()
+                )
+                .awaitValue()
+        }
+        notificationPlan?.let { InternalTransferNotificationPublisher.cancel(appContext, it.notificationId) }
+        appContext.cancelImportNotification(pendingImport.id)
+        paired?.let { appContext.cancelImportNotification(it.id) }
         return true
     }
 

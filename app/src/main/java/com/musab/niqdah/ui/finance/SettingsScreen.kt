@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -49,7 +50,7 @@ fun SettingsScreen(
     padding: PaddingValues,
     onUpdateProfileAndDebt: (String, String, String, String, String, String) -> Unit,
     onUpdateCategoryBudgets: (Map<String, String>) -> Unit,
-    onUpdateBankMessageSettings: (Boolean, String, Boolean, String, Boolean, String, String, String, String, String, Boolean) -> Unit,
+    onUpdateBankMessageSettings: (Boolean, String, Boolean, String, Boolean, String, String, String, String, String, Boolean, Boolean, Int) -> Unit,
     onLogout: () -> Unit,
     onClearError: () -> Unit
 ) {
@@ -77,6 +78,8 @@ fun SettingsScreen(
     var savingsAccountSuffix by remember { mutableStateOf("") }
     var isSavingsParserEnabled by remember { mutableStateOf(true) }
     var isMerchantLearningEnabled by remember { mutableStateOf(true) }
+    var isInternalTransferReminderEnabled by remember { mutableStateOf(true) }
+    var internalTransferReminderThresholdMinutes by remember { mutableStateOf(10) }
     var debitKeywords by remember { mutableStateOf("") }
     var creditKeywords by remember { mutableStateOf("") }
     var savingsTransferKeywords by remember { mutableStateOf("") }
@@ -120,6 +123,8 @@ fun SettingsScreen(
         savingsAccountSuffix = settings.savingsAccountSuffix
         isSavingsParserEnabled = settings.savingsSource.isEnabled
         isMerchantLearningEnabled = settings.isMerchantLearningEnabled
+        isInternalTransferReminderEnabled = settings.isInternalTransferReminderEnabled
+        internalTransferReminderThresholdMinutes = settings.internalTransferReminderThresholdMinutes
         debitKeywords = settings.debitKeywords.joinToString(", ")
         creditKeywords = settings.creditKeywords.joinToString(", ")
         savingsTransferKeywords = settings.savingsTransferKeywords.joinToString(", ")
@@ -211,6 +216,10 @@ fun SettingsScreen(
                 onSavingsParserEnabledChange = { isSavingsParserEnabled = it },
                 isMerchantLearningEnabled = isMerchantLearningEnabled,
                 onMerchantLearningEnabledChange = { isMerchantLearningEnabled = it },
+                isInternalTransferReminderEnabled = isInternalTransferReminderEnabled,
+                onInternalTransferReminderEnabledChange = { isInternalTransferReminderEnabled = it },
+                internalTransferReminderThresholdMinutes = internalTransferReminderThresholdMinutes,
+                onInternalTransferReminderThresholdChange = { internalTransferReminderThresholdMinutes = it },
                 merchantRules = uiState.data.merchantRules,
                 debitKeywords = debitKeywords,
                 onDebitKeywordsChange = { debitKeywords = it },
@@ -231,7 +240,9 @@ fun SettingsScreen(
                         savingsTransferKeywords,
                         dailyUseAccountSuffix,
                         savingsAccountSuffix,
-                        isMerchantLearningEnabled
+                        isMerchantLearningEnabled,
+                        isInternalTransferReminderEnabled,
+                        internalTransferReminderThresholdMinutes
                     )
                 }
             )
@@ -375,6 +386,10 @@ private fun BankMessageSourcesCard(
     onSavingsParserEnabledChange: (Boolean) -> Unit,
     isMerchantLearningEnabled: Boolean,
     onMerchantLearningEnabledChange: (Boolean) -> Unit,
+    isInternalTransferReminderEnabled: Boolean,
+    onInternalTransferReminderEnabledChange: (Boolean) -> Unit,
+    internalTransferReminderThresholdMinutes: Int,
+    onInternalTransferReminderThresholdChange: (Int) -> Unit,
     merchantRules: List<MerchantRule>,
     debitKeywords: String,
     onDebitKeywordsChange: (String) -> Unit,
@@ -501,6 +516,24 @@ private fun BankMessageSourcesCard(
                 isEnabled = isMerchantLearningEnabled,
                 onEnabledChange = onMerchantLearningEnabledChange
             )
+            SourceToggleRow(
+                title = "Internal transfer safety reminder",
+                isEnabled = isInternalTransferReminderEnabled,
+                onEnabledChange = onInternalTransferReminderEnabledChange
+            )
+            Text(
+                text = "Reminder threshold",
+                style = MaterialTheme.typography.titleSmall
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(5, 10, 30, 60).forEach { minutes ->
+                    FilterChip(
+                        selected = internalTransferReminderThresholdMinutes == minutes,
+                        onClick = { onInternalTransferReminderThresholdChange(minutes) },
+                        label = { Text("$minutes min") }
+                    )
+                }
+            }
             if (merchantRules.isNotEmpty()) {
                 Text(text = "Merchant rules", style = MaterialTheme.typography.titleSmall)
                 merchantRules.take(8).forEach { rule ->

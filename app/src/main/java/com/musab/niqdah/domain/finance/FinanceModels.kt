@@ -196,6 +196,8 @@ data class BankMessageParserSettings(
     val dailyUseAccountSuffix: String = "",
     val savingsAccountSuffix: String = "",
     val isMerchantLearningEnabled: Boolean = true,
+    val isInternalTransferReminderEnabled: Boolean = true,
+    val internalTransferReminderThresholdMinutes: Int = 10,
     val lastIgnoredSender: String = "",
     val lastParsedBankMessageAtMillis: Long = 0L,
     val lastIgnoredReason: String = "",

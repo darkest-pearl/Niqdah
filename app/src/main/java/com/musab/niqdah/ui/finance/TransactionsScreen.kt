@@ -171,6 +171,7 @@ fun TransactionsScreen(
                 PendingBankImportCard(
                     pendingImport = pendingImport,
                     hasMatchedPair = hasMatchedPair,
+                    reminderThresholdMinutes = uiState.data.bankMessageSettings.internalTransferReminderThresholdMinutes,
                     categories = categories,
                     isSaving = uiState.isSaving,
                     onSave = onSavePendingBankImport,
@@ -470,6 +471,7 @@ private fun InternalTransferRecordCard(
 private fun PendingBankImportCard(
     pendingImport: PendingBankImport,
     hasMatchedPair: Boolean,
+    reminderThresholdMinutes: Int,
     categories: List<BudgetCategory>,
     isSaving: Boolean,
     onSave: (PendingBankImport) -> Unit,
@@ -478,6 +480,10 @@ private fun PendingBankImportCard(
 ) {
     var showMessage by remember(pendingImport.id) { mutableStateOf(false) }
     var isEditing by remember(pendingImport.id) { mutableStateOf(false) }
+    val isUnmatchedInternalDebit = pendingImport.type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT && !hasMatchedPair
+    val isPastReminderThreshold = isUnmatchedInternalDebit &&
+        System.currentTimeMillis() - pendingImport.createdAtMillis.coerceAtLeast(pendingImport.receivedAtMillis) >=
+        reminderThresholdMinutes.coerceAtLeast(1) * 60_000L
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -501,6 +507,23 @@ private fun PendingBankImportCard(
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold
+                )
+            }
+            if (isUnmatchedInternalDebit) {
+                Text(
+                    text = "Waiting for matching credit",
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = if (isPastReminderThreshold) {
+                        "Matching credit has not arrived yet. Review this transfer."
+                    } else {
+                        "Wait for matching credit if this was a transfer to savings."
+                    },
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodyMedium
                 )
             }
             PendingImportLine(
@@ -551,15 +574,17 @@ private fun PendingBankImportCard(
             if (pendingImport.pairedTransferStatus.isNotBlank()) {
                 PendingImportLine("Pairing", pendingImport.pairedTransferStatus)
             }
-            if (showMessage) {
-                Text(
-                    text = pendingImport.rawMessage,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-            TextButton(onClick = { showMessage = !showMessage }) {
-                Text(if (showMessage) "Hide message" else "Show message")
+            if (pendingImport.rawMessage.isNotBlank()) {
+                if (showMessage) {
+                    Text(
+                        text = pendingImport.rawMessage,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                TextButton(onClick = { showMessage = !showMessage }) {
+                    Text(if (showMessage) "Hide message" else "Show message")
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
@@ -567,13 +592,7 @@ private fun PendingBankImportCard(
                     enabled = !isSaving,
                     onClick = { onSave(pendingImport) }
                 ) {
-                    Text(
-                        when {
-                            isSaving -> "Saving..."
-                            hasMatchedPair -> "Save paired transfer"
-                            else -> "Save"
-                        }
-                    )
+                    Text(PendingBankImportSaveRules.saveButtonLabel(isSaving))
                 }
                 OutlinedButton(
                     modifier = Modifier.weight(1f),

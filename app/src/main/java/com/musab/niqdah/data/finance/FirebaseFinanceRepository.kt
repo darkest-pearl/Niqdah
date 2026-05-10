@@ -508,7 +508,7 @@ class FirebaseFinanceRepository(
         mapOf(
             "messageHash" to messageHash,
             "senderName" to senderName,
-            "rawMessage" to rawMessage,
+            "rawMessage" to "",
             "sourceType" to sourceType.name,
             "type" to type.name,
             "amount" to amount,
@@ -622,6 +622,8 @@ class FirebaseFinanceRepository(
             "dailyUseAccountSuffix" to dailyUseAccountSuffix,
             "savingsAccountSuffix" to savingsAccountSuffix,
             "isMerchantLearningEnabled" to isMerchantLearningEnabled,
+            "isInternalTransferReminderEnabled" to isInternalTransferReminderEnabled,
+            "internalTransferReminderThresholdMinutes" to internalTransferReminderThresholdMinutes,
             "lastIgnoredSender" to lastIgnoredSender,
             "lastParsedBankMessageAtMillis" to lastParsedBankMessageAtMillis,
             "lastIgnoredReason" to lastIgnoredReason,
@@ -803,6 +805,12 @@ class FirebaseFinanceRepository(
             savingsAccountSuffix = getString("savingsAccountSuffix") ?: defaults.savingsAccountSuffix,
             isMerchantLearningEnabled = getBoolean("isMerchantLearningEnabled")
                 ?: defaults.isMerchantLearningEnabled,
+            isInternalTransferReminderEnabled = getBoolean("isInternalTransferReminderEnabled")
+                ?: defaults.isInternalTransferReminderEnabled,
+            internalTransferReminderThresholdMinutes = (
+                (get("internalTransferReminderThresholdMinutes") as? Number)?.toInt()
+                    ?: defaults.internalTransferReminderThresholdMinutes
+                ).coerceIn(1, 24 * 60),
             lastIgnoredSender = getString("lastIgnoredSender") ?: defaults.lastIgnoredSender,
             lastParsedBankMessageAtMillis = long(
                 "lastParsedBankMessageAtMillis",

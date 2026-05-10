@@ -12,6 +12,7 @@ object FinanceDefaults {
     const val FAMILY_GIFTS_CATEGORY_ID = "family_gifts_expense"
     const val AVOID_CATEGORY_ID = "avoid"
     const val MARRIAGE_SAVINGS_CATEGORY_ID = "marriage_savings"
+    const val DEFAULT_INTERNAL_TRANSFER_REMINDER_MINUTES = 10
 
     val DEFAULT_DEBIT_KEYWORDS = listOf(
         "debited",
@@ -215,6 +216,8 @@ object FinanceDefaults {
             savingsSource = BankMessageSourceSettings(senderName = "", isEnabled = true),
             isAutomaticSmsImportEnabled = false,
             requireReviewBeforeSaving = true,
+            isInternalTransferReminderEnabled = true,
+            internalTransferReminderThresholdMinutes = DEFAULT_INTERNAL_TRANSFER_REMINDER_MINUTES,
             debitKeywords = DEFAULT_DEBIT_KEYWORDS,
             creditKeywords = DEFAULT_CREDIT_KEYWORDS,
             savingsTransferKeywords = DEFAULT_SAVINGS_TRANSFER_KEYWORDS

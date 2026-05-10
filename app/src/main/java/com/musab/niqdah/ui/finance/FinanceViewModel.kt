@@ -448,7 +448,9 @@ class FinanceViewModel(
         savingsTransferKeywordsInput: String,
         dailyUseAccountSuffix: String = "",
         savingsAccountSuffix: String = "",
-        isMerchantLearningEnabled: Boolean = true
+        isMerchantLearningEnabled: Boolean = true,
+        isInternalTransferReminderEnabled: Boolean = true,
+        internalTransferReminderThresholdMinutes: Int = FinanceDefaults.DEFAULT_INTERNAL_TRANSFER_REMINDER_MINUTES
     ) {
         val currentSettings = _uiState.value.data.bankMessageSettings
         val settings = BankMessageParserSettings(
@@ -465,6 +467,8 @@ class FinanceViewModel(
             dailyUseAccountSuffix = dailyUseAccountSuffix.trim().filter { it.isDigit() }.takeLast(4),
             savingsAccountSuffix = savingsAccountSuffix.trim().filter { it.isDigit() }.takeLast(4),
             isMerchantLearningEnabled = isMerchantLearningEnabled,
+            isInternalTransferReminderEnabled = isInternalTransferReminderEnabled,
+            internalTransferReminderThresholdMinutes = internalTransferReminderThresholdMinutes.coerceIn(1, 24 * 60),
             lastIgnoredSender = currentSettings.lastIgnoredSender,
             lastParsedBankMessageAtMillis = currentSettings.lastParsedBankMessageAtMillis,
             lastIgnoredReason = currentSettings.lastIgnoredReason,

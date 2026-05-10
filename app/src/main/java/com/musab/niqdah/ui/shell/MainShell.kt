@@ -159,7 +159,7 @@ fun MainShell(
                 onUpdateCategoryBudgets = financeViewModel::updateCategoryBudgets,
                 onUpdateBankMessageSettings = { automatic, dailySender, dailyEnabled, savingsSender,
                     savingsEnabled, debitKeywords, creditKeywords, savingsKeywords,
-                    dailySuffix, savingsSuffix, learnFromEdits ->
+                    dailySuffix, savingsSuffix, learnFromEdits, reminderEnabled, reminderMinutes ->
                     financeViewModel.updateBankMessageSettings(
                         isAutomaticSmsImportEnabled = automatic,
                         dailySenderName = dailySender,
@@ -171,7 +171,9 @@ fun MainShell(
                         savingsTransferKeywordsInput = savingsKeywords,
                         dailyUseAccountSuffix = dailySuffix,
                         savingsAccountSuffix = savingsSuffix,
-                        isMerchantLearningEnabled = learnFromEdits
+                        isMerchantLearningEnabled = learnFromEdits,
+                        isInternalTransferReminderEnabled = reminderEnabled,
+                        internalTransferReminderThresholdMinutes = reminderMinutes
                     )
                 },
                 onLogout = onLogout,
