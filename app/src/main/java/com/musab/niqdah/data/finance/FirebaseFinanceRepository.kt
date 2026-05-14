@@ -9,6 +9,10 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.musab.niqdah.core.firebase.FirebaseProvider
 import com.musab.niqdah.data.firestore.FirestoreCollections
 import com.musab.niqdah.domain.finance.AccountBalanceSnapshot
+import com.musab.niqdah.domain.finance.AccountBalanceConfidence
+import com.musab.niqdah.domain.finance.AccountLedgerEntry
+import com.musab.niqdah.domain.finance.AccountLedgerEventType
+import com.musab.niqdah.domain.finance.AccountLedgerSource
 import com.musab.niqdah.domain.finance.AccountKind
 import com.musab.niqdah.domain.finance.BankMessageImportHistory
 import com.musab.niqdah.domain.finance.BankMessageImportStatus
@@ -22,6 +26,7 @@ import com.musab.niqdah.domain.finance.DebtLenderType
 import com.musab.niqdah.domain.finance.DebtPressureLevel
 import com.musab.niqdah.domain.finance.DebtProfile
 import com.musab.niqdah.domain.finance.DebtTracker
+import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.FinanceData
 import com.musab.niqdah.domain.finance.FinanceDefaults
@@ -49,6 +54,9 @@ import com.musab.niqdah.domain.finance.SavingsGoal
 import com.musab.niqdah.domain.finance.UserFinancialProfile
 import com.musab.niqdah.domain.finance.UserPreferenceSetup
 import com.musab.niqdah.domain.finance.UserProfile
+import com.musab.niqdah.domain.finance.effectiveMinorUnits
+import com.musab.niqdah.domain.finance.majorToMinorUnits
+import com.musab.niqdah.domain.finance.minorUnitsToMajor
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -116,12 +124,14 @@ class FirebaseFinanceRepository(
         val bankExtrasFlow = combine(
             observeBankMessageSettings(db),
             observeAccountBalanceSnapshots(db),
+            observeAccountLedgerEntries(db),
             observeInternalTransferRecords(db),
             observeMerchantRules(db)
-        ) { bankMessageSettings, accountBalanceSnapshots, internalTransferRecords, merchantRules ->
+        ) { bankMessageSettings, accountBalanceSnapshots, accountLedgerEntries, internalTransferRecords, merchantRules ->
             BankExtras(
                 bankMessageSettings = bankMessageSettings,
                 accountBalanceSnapshots = accountBalanceSnapshots,
+                accountLedgerEntries = accountLedgerEntries,
                 internalTransferRecords = internalTransferRecords,
                 merchantRules = merchantRules
             )
@@ -152,6 +162,7 @@ class FirebaseFinanceRepository(
                 incomeTransactions = core.incomeTransactions,
                 pendingBankImports = core.pendingBankImports,
                 accountBalanceSnapshots = bankExtras.accountBalanceSnapshots,
+                accountLedgerEntries = bankExtras.accountLedgerEntries,
                 internalTransferRecords = bankExtras.internalTransferRecords,
                 merchantRules = bankExtras.merchantRules,
                 goals = goals,
@@ -237,6 +248,13 @@ class FirebaseFinanceRepository(
         accountBalanceSnapshotsCollection(requireFirestore())
             .document(snapshot.documentId())
             .set(snapshot.toFirestore())
+            .awaitValue()
+    }
+
+    override suspend fun upsertAccountLedgerEntry(entry: AccountLedgerEntry) {
+        accountLedgerEntriesCollection(requireFirestore())
+            .document(entry.id)
+            .set(entry.toFirestore())
             .awaitValue()
     }
 
@@ -392,6 +410,22 @@ class FirebaseFinanceRepository(
             awaitClose { registration.remove() }
         }
 
+    private fun observeAccountLedgerEntries(db: FirebaseFirestore): Flow<List<AccountLedgerEntry>> =
+        callbackFlow {
+            val registration = accountLedgerEntriesCollection(db).addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val entries = snapshot?.documents
+                    ?.mapNotNull { it.toAccountLedgerEntry() }
+                    ?.sortedByDescending { it.createdAtMillis }
+                    ?: emptyList()
+                trySend(entries)
+            }
+            awaitClose { registration.remove() }
+        }
+
     private fun observeInternalTransferRecords(db: FirebaseFirestore): Flow<List<InternalTransferRecord>> =
         callbackFlow {
             val registration = internalTransferRecordsCollection(db).addSnapshotListener { snapshot, error ->
@@ -532,6 +566,9 @@ class FirebaseFinanceRepository(
     private fun accountBalanceSnapshotsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.ACCOUNT_BALANCE_SNAPSHOTS)
 
+    private fun accountLedgerEntriesCollection(db: FirebaseFirestore): CollectionReference =
+        userDocument(db).collection(FirestoreCollections.ACCOUNT_LEDGER_ENTRIES)
+
     private fun internalTransferRecordsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.INTERNAL_TRANSFER_RECORDS)
 
@@ -569,8 +606,11 @@ class FirebaseFinanceRepository(
             "uid" to uid,
             "currency" to currency,
             "salary" to salary,
+            "salaryMinor" to effectiveMinorUnits(salaryMinor, salary),
             "extraIncome" to extraIncome,
+            "extraIncomeMinor" to effectiveMinorUnits(extraIncomeMinor, extraIncome),
             "monthlySavingsTarget" to monthlySavingsTarget,
+            "monthlySavingsTargetMinor" to effectiveMinorUnits(monthlySavingsTargetMinor, monthlySavingsTarget),
             "salaryDayOfMonth" to salaryDayOfMonth,
             "onboardingCompleted" to onboardingCompleted,
             "primaryGoalId" to primaryGoalId,
@@ -583,6 +623,7 @@ class FirebaseFinanceRepository(
             "uid" to uid,
             "controlFocus" to controlFocus.name,
             "monthlyIncome" to monthlyIncome,
+            "monthlyIncomeMinor" to majorToMinorUnits(monthlyIncome),
             "currency" to currency,
             "salaryDayOfMonth" to salaryDayOfMonth,
             "fixedExpenses" to fixedExpenses.map { it.toFirestore() },
@@ -599,6 +640,7 @@ class FirebaseFinanceRepository(
             "id" to id,
             "name" to name,
             "amount" to amount,
+            "amountMinor" to majorToMinorUnits(amount),
             "dueDayOfMonth" to dueDayOfMonth
         )
 
@@ -606,9 +648,11 @@ class FirebaseFinanceRepository(
         mapOf(
             "hasDebt" to hasDebt,
             "totalDebtAmount" to totalDebtAmount,
+            "totalDebtAmountMinor" to majorToMinorUnits(totalDebtAmount),
             "lenderType" to lenderType.name,
             "pressureLevel" to pressureLevel.name,
             "monthlyInstallmentAmount" to monthlyInstallmentAmount,
+            "monthlyInstallmentAmountMinor" to majorToMinorUnits(monthlyInstallmentAmount),
             "dueDayOfMonth" to dueDayOfMonth
         )
 
@@ -617,8 +661,10 @@ class FirebaseFinanceRepository(
             "name" to name,
             "purpose" to purpose.name,
             "targetAmount" to targetAmount,
+            "targetAmountMinor" to majorToMinorUnits(targetAmount),
             "targetDate" to targetDate,
-            "monthlyTargetSuggestion" to monthlyTargetSuggestion
+            "monthlyTargetSuggestion" to monthlyTargetSuggestion,
+            "monthlyTargetSuggestionMinor" to majorToMinorUnits(monthlyTargetSuggestion)
         )
 
     private fun UserPreferenceSetup.toFirestore(): Map<String, Any> =
@@ -639,6 +685,7 @@ class FirebaseFinanceRepository(
             "id" to id,
             "name" to name,
             "monthlyBudget" to monthlyBudget,
+            "monthlyBudgetMinor" to majorToMinorUnits(monthlyBudget),
             "isEnabled" to isEnabled
         )
 
@@ -646,6 +693,7 @@ class FirebaseFinanceRepository(
         mapOf(
             "name" to name,
             "monthlyBudget" to monthlyBudget,
+            "monthlyBudgetMinor" to effectiveMinorUnits(monthlyBudgetMinor, monthlyBudget),
             "type" to type.name,
             "createdAtMillis" to createdAtMillis,
             "updatedAtMillis" to updatedAtMillis
@@ -655,6 +703,7 @@ class FirebaseFinanceRepository(
         mapOf(
             "categoryId" to categoryId,
             "amount" to amount,
+            "amountMinor" to effectiveMinorUnits(amountMinor, amount),
             "currency" to currency,
             "note" to note,
             "necessity" to necessity.name,
@@ -667,9 +716,11 @@ class FirebaseFinanceRepository(
     private fun IncomeTransaction.toFirestore(): Map<String, Any> =
         mapOf(
             "amount" to amount,
+            "amountMinor" to effectiveMinorUnits(amountMinor, amount),
             "currency" to currency,
             "source" to source,
             "note" to note,
+            "depositType" to depositType.name,
             "occurredAtMillis" to occurredAtMillis,
             "yearMonth" to yearMonth,
             "createdAtMillis" to createdAtMillis,
@@ -684,12 +735,16 @@ class FirebaseFinanceRepository(
             "sourceType" to sourceType.name,
             "type" to type.name,
             "amount" to amount,
+            "amountMinor" to effectiveMinorUnits(amountMinor, amount),
             "currency" to currency,
             "availableBalance" to availableBalance,
+            "availableBalanceMinor" to effectiveMinorUnits(availableBalanceMinor, availableBalance),
             "availableBalanceCurrency" to availableBalanceCurrency,
             "originalForeignAmount" to originalForeignAmount,
+            "originalForeignAmountMinor" to effectiveMinorUnits(originalForeignAmountMinor, originalForeignAmount),
             "originalForeignCurrency" to originalForeignCurrency,
             "inferredAccountDebit" to inferredAccountDebit,
+            "inferredAccountDebitMinor" to effectiveMinorUnits(inferredAccountDebitMinor, inferredAccountDebit),
             "isAmountInferredFromBalance" to isAmountInferredFromBalance,
             "reviewNote" to reviewNote,
             "merchantName" to merchantName,
@@ -703,6 +758,7 @@ class FirebaseFinanceRepository(
             "suggestedCategoryName" to suggestedCategoryName,
             "suggestedNecessity" to suggestedNecessity.name,
             "confidence" to confidence.name,
+            "depositType" to depositType.name,
             "receivedAtMillis" to receivedAtMillis,
             "createdAtMillis" to createdAtMillis,
             "updatedAtMillis" to updatedAtMillis
@@ -721,15 +777,32 @@ class FirebaseFinanceRepository(
             "accountKind" to accountKind.name,
             "sender" to sender,
             "availableBalance" to availableBalance,
+            "availableBalanceMinor" to effectiveMinorUnits(availableBalanceMinor, availableBalance),
             "currency" to currency,
             "messageTimestampMillis" to messageTimestampMillis,
             "sourceMessageHash" to sourceMessageHash,
             "createdAtMillis" to createdAtMillis
         )
 
+    private fun AccountLedgerEntry.toFirestore(): Map<String, Any?> =
+        mapOf(
+            "accountKind" to accountKind.name,
+            "accountSuffix" to accountSuffix,
+            "eventType" to eventType.name,
+            "amountMinor" to amountMinor,
+            "balanceAfterMinor" to balanceAfterMinor,
+            "currency" to currency,
+            "confidence" to confidence.name,
+            "source" to source.name,
+            "relatedTransactionId" to relatedTransactionId,
+            "createdAtMillis" to createdAtMillis,
+            "note" to note
+        )
+
     private fun InternalTransferRecord.toFirestore(): Map<String, Any?> =
         mapOf(
             "amount" to amount,
+            "amountMinor" to effectiveMinorUnits(amountMinor, amount),
             "currency" to currency,
             "sourceAccountSuffix" to sourceAccountSuffix,
             "targetAccountSuffix" to targetAccountSuffix,
@@ -758,7 +831,9 @@ class FirebaseFinanceRepository(
         mapOf(
             "name" to name,
             "targetAmount" to targetAmount,
+            "targetAmountMinor" to effectiveMinorUnits(targetAmountMinor, targetAmount),
             "savedAmount" to savedAmount,
+            "savedAmountMinor" to effectiveMinorUnits(savedAmountMinor, savedAmount),
             "targetDate" to targetDate,
             "purpose" to purpose.name,
             "isPrimary" to isPrimary,
@@ -769,8 +844,11 @@ class FirebaseFinanceRepository(
     private fun DebtTracker.toFirestore(): Map<String, Any?> =
         mapOf(
             "startingAmount" to startingAmount,
+            "startingAmountMinor" to effectiveMinorUnits(startingAmountMinor, startingAmount),
             "remainingAmount" to remainingAmount,
+            "remainingAmountMinor" to effectiveMinorUnits(remainingAmountMinor, remainingAmount),
             "monthlyAutoReduction" to monthlyAutoReduction,
+            "monthlyAutoReductionMinor" to effectiveMinorUnits(monthlyAutoReductionMinor, monthlyAutoReduction),
             "lenderType" to lenderType.name,
             "pressureLevel" to pressureLevel.name,
             "dueDayOfMonth" to dueDayOfMonth,
@@ -798,6 +876,10 @@ class FirebaseFinanceRepository(
             "monthlySavingsReminderHour" to monthlySavingsReminderHour,
             "monthlySavingsReminderMinute" to monthlySavingsReminderMinute,
             "monthlySavingsTargetAmount" to monthlySavingsTargetAmount,
+            "monthlySavingsTargetAmountMinor" to effectiveMinorUnits(
+                monthlySavingsTargetAmountMinor,
+                monthlySavingsTargetAmount
+            ),
             "isMissedSavingsReminderEnabled" to isMissedSavingsReminderEnabled,
             "missedSavingsCheckDay" to missedSavingsCheckDay,
             "missedSavingsReminderHour" to missedSavingsReminderHour,
@@ -806,6 +888,10 @@ class FirebaseFinanceRepository(
             "isAvoidCategoryWarningEnabled" to isAvoidCategoryWarningEnabled,
             "januaryTargetDate" to januaryTargetDate,
             "januaryFundTargetAmount" to januaryFundTargetAmount,
+            "januaryFundTargetAmountMinor" to effectiveMinorUnits(
+                januaryFundTargetAmountMinor,
+                januaryFundTargetAmount
+            ),
             "updatedAtMillis" to updatedAtMillis
         )
 
@@ -813,6 +899,7 @@ class FirebaseFinanceRepository(
         mapOf(
             "title" to title,
             "amount" to amount,
+            "amountMinor" to effectiveMinorUnits(amountMinor, amount),
             "dueDayOfMonth" to dueDayOfMonth,
             "dueDateMillis" to dueDateMillis,
             "recurrence" to recurrence.name,
@@ -858,7 +945,13 @@ class FirebaseFinanceRepository(
             onboardingCompleted = getBoolean("onboardingCompleted") ?: false,
             primaryGoalId = getString("primaryGoalId") ?: "",
             createdAtMillis = long("createdAtMillis"),
-            updatedAtMillis = long("updatedAtMillis")
+            updatedAtMillis = long("updatedAtMillis"),
+            salaryMinor = long("salaryMinor", majorToMinorUnits(double("salary", 0.0))),
+            extraIncomeMinor = long("extraIncomeMinor", majorToMinorUnits(double("extraIncome", 0.0))),
+            monthlySavingsTargetMinor = long(
+                "monthlySavingsTargetMinor",
+                majorToMinorUnits(double("monthlySavingsTarget", 0.0))
+            )
         )
 
     @Suppress("UNCHECKED_CAST")
@@ -891,7 +984,8 @@ class FirebaseFinanceRepository(
             monthlyBudget = double("monthlyBudget"),
             type = categoryType(getString("type")),
             createdAtMillis = long("createdAtMillis"),
-            updatedAtMillis = long("updatedAtMillis")
+            updatedAtMillis = long("updatedAtMillis"),
+            monthlyBudgetMinor = long("monthlyBudgetMinor", majorToMinorUnits(double("monthlyBudget")))
         )
 
     private fun DocumentSnapshot.toExpenseTransaction(): ExpenseTransaction =
@@ -905,7 +999,8 @@ class FirebaseFinanceRepository(
             occurredAtMillis = long("occurredAtMillis"),
             yearMonth = getString("yearMonth") ?: "",
             createdAtMillis = long("createdAtMillis"),
-            updatedAtMillis = long("updatedAtMillis")
+            updatedAtMillis = long("updatedAtMillis"),
+            amountMinor = long("amountMinor", majorToMinorUnits(double("amount")))
         )
 
     private fun DocumentSnapshot.toIncomeTransaction(): IncomeTransaction =
@@ -918,7 +1013,9 @@ class FirebaseFinanceRepository(
             occurredAtMillis = long("occurredAtMillis"),
             yearMonth = getString("yearMonth") ?: "",
             createdAtMillis = long("createdAtMillis"),
-            updatedAtMillis = long("updatedAtMillis")
+            updatedAtMillis = long("updatedAtMillis"),
+            amountMinor = long("amountMinor", majorToMinorUnits(double("amount"))),
+            depositType = depositType(getString("depositType"))
         )
 
     private fun DocumentSnapshot.toPendingBankImport(): PendingBankImport =
@@ -951,7 +1048,15 @@ class FirebaseFinanceRepository(
             confidence = parsedBankMessageConfidence(getString("confidence")),
             receivedAtMillis = long("receivedAtMillis"),
             createdAtMillis = long("createdAtMillis"),
-            updatedAtMillis = long("updatedAtMillis")
+            updatedAtMillis = long("updatedAtMillis"),
+            amountMinor = nullableLong("amountMinor") ?: nullableDouble("amount")?.let { majorToMinorUnits(it) },
+            availableBalanceMinor = nullableLong("availableBalanceMinor")
+                ?: nullableDouble("availableBalance")?.let { majorToMinorUnits(it) },
+            originalForeignAmountMinor = nullableLong("originalForeignAmountMinor")
+                ?: nullableDouble("originalForeignAmount")?.let { majorToMinorUnits(it) },
+            inferredAccountDebitMinor = nullableLong("inferredAccountDebitMinor")
+                ?: nullableDouble("inferredAccountDebit")?.let { majorToMinorUnits(it) },
+            depositType = depositType(getString("depositType"))
         )
 
     private fun DocumentSnapshot.toMerchantRule(): MerchantRule? {
@@ -977,7 +1082,29 @@ class FirebaseFinanceRepository(
             currency = getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
             messageTimestampMillis = long("messageTimestampMillis"),
             sourceMessageHash = getString("sourceMessageHash") ?: id.substringAfter("-", id),
-            createdAtMillis = long("createdAtMillis")
+            createdAtMillis = long("createdAtMillis"),
+            availableBalanceMinor = long("availableBalanceMinor", majorToMinorUnits(double("availableBalance")))
+        )
+    }
+
+    private fun DocumentSnapshot.toAccountLedgerEntry(): AccountLedgerEntry? {
+        val accountKind = accountKind(getString("accountKind")) ?: return null
+        val eventType = accountLedgerEventType(getString("eventType")) ?: return null
+        val confidence = accountBalanceConfidence(getString("confidence")) ?: return null
+        val source = accountLedgerSource(getString("source")) ?: AccountLedgerSource.SYSTEM
+        return AccountLedgerEntry(
+            id = id,
+            accountKind = accountKind,
+            accountSuffix = getString("accountSuffix") ?: "",
+            eventType = eventType,
+            amountMinor = long("amountMinor"),
+            balanceAfterMinor = nullableLong("balanceAfterMinor"),
+            currency = getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
+            confidence = confidence,
+            source = source,
+            relatedTransactionId = getString("relatedTransactionId"),
+            createdAtMillis = long("createdAtMillis"),
+            note = getString("note") ?: ""
         )
     }
 
@@ -998,7 +1125,8 @@ class FirebaseFinanceRepository(
             createdAtMillis = long("createdAtMillis"),
             messageTimestampMillis = long("messageTimestampMillis"),
             note = getString("note") ?: "",
-            sourceMessageHash = getString("sourceMessageHash") ?: id
+            sourceMessageHash = getString("sourceMessageHash") ?: id,
+            amountMinor = long("amountMinor", majorToMinorUnits(double("amount")))
         )
     }
 
@@ -1012,7 +1140,9 @@ class FirebaseFinanceRepository(
             purpose = goalPurpose(getString("purpose")),
             isPrimary = getBoolean("isPrimary") ?: false,
             createdAtMillis = long("createdAtMillis"),
-            updatedAtMillis = long("updatedAtMillis")
+            updatedAtMillis = long("updatedAtMillis"),
+            targetAmountMinor = long("targetAmountMinor", majorToMinorUnits(double("targetAmount"))),
+            savedAmountMinor = long("savedAmountMinor", majorToMinorUnits(double("savedAmount")))
         )
 
     private fun DocumentSnapshot.toDebtTracker(): DebtTracker =
@@ -1023,7 +1153,13 @@ class FirebaseFinanceRepository(
             lenderType = debtLenderType(getString("lenderType")),
             pressureLevel = debtPressureLevel(getString("pressureLevel")),
             dueDayOfMonth = nullableInt("dueDayOfMonth")?.coerceIn(1, 31),
-            updatedAtMillis = long("updatedAtMillis")
+            updatedAtMillis = long("updatedAtMillis"),
+            startingAmountMinor = long("startingAmountMinor", majorToMinorUnits(double("startingAmount", 0.0))),
+            remainingAmountMinor = long("remainingAmountMinor", majorToMinorUnits(double("remainingAmount", 0.0))),
+            monthlyAutoReductionMinor = long(
+                "monthlyAutoReductionMinor",
+                majorToMinorUnits(double("monthlyAutoReduction", 0.0))
+            )
         )
 
     @Suppress("UNCHECKED_CAST")
@@ -1105,7 +1241,15 @@ class FirebaseFinanceRepository(
                 ?: defaults.isAvoidCategoryWarningEnabled,
             januaryTargetDate = getString("januaryTargetDate") ?: defaults.januaryTargetDate,
             januaryFundTargetAmount = double("januaryFundTargetAmount", defaults.januaryFundTargetAmount),
-            updatedAtMillis = long("updatedAtMillis", defaults.updatedAtMillis)
+            updatedAtMillis = long("updatedAtMillis", defaults.updatedAtMillis),
+            monthlySavingsTargetAmountMinor = long(
+                "monthlySavingsTargetAmountMinor",
+                majorToMinorUnits(double("monthlySavingsTargetAmount", defaults.monthlySavingsTargetAmount))
+            ),
+            januaryFundTargetAmountMinor = long(
+                "januaryFundTargetAmountMinor",
+                majorToMinorUnits(double("januaryFundTargetAmount", defaults.januaryFundTargetAmount))
+            )
         )
     }
 
@@ -1120,7 +1264,8 @@ class FirebaseFinanceRepository(
             status = necessaryItemStatus(getString("status")),
             isNotificationEnabled = getBoolean("isNotificationEnabled") ?: true,
             createdAtMillis = long("createdAtMillis"),
-            updatedAtMillis = long("updatedAtMillis")
+            updatedAtMillis = long("updatedAtMillis"),
+            amountMinor = nullableLong("amountMinor") ?: nullableDouble("amount")?.let { majorToMinorUnits(it) }
         )
 
     private fun DocumentSnapshot.double(field: String, default: Double = 0.0): Double =
@@ -1131,6 +1276,9 @@ class FirebaseFinanceRepository(
 
     private fun DocumentSnapshot.nullableInt(field: String): Int? =
         (get(field) as? Number)?.toInt()
+
+    private fun DocumentSnapshot.nullableLong(field: String): Long? =
+        (get(field) as? Number)?.toLong()
 
     private fun DocumentSnapshot.long(field: String, default: Long = 0L): Long =
         (get(field) as? Number)?.toLong() ?: default
@@ -1223,6 +1371,9 @@ class FirebaseFinanceRepository(
         ParsedBankMessageConfidence.entries.firstOrNull { it.name == value }
             ?: ParsedBankMessageConfidence.LOW
 
+    private fun depositType(value: String?): DepositType =
+        DepositType.entries.firstOrNull { it.name == value } ?: DepositType.OTHER_INCOME
+
     private fun necessaryItemRecurrence(value: String?): NecessaryItemRecurrence =
         NecessaryItemRecurrence.entries.firstOrNull { it.name == value }
             ?: NecessaryItemRecurrence.MONTHLY
@@ -1233,6 +1384,15 @@ class FirebaseFinanceRepository(
 
     private fun accountKind(value: String?): AccountKind? =
         AccountKind.entries.firstOrNull { it.name == value }
+
+    private fun accountLedgerEventType(value: String?): AccountLedgerEventType? =
+        AccountLedgerEventType.entries.firstOrNull { it.name == value }
+
+    private fun accountBalanceConfidence(value: String?): AccountBalanceConfidence? =
+        AccountBalanceConfidence.entries.firstOrNull { it.name == value }
+
+    private fun accountLedgerSource(value: String?): AccountLedgerSource? =
+        AccountLedgerSource.entries.firstOrNull { it.name == value }
 
     private fun internalTransferDirection(value: String?): InternalTransferDirection? =
         InternalTransferDirection.entries.firstOrNull { it.name == value }
@@ -1273,6 +1433,7 @@ private data class FinanceCore(
 private data class BankExtras(
     val bankMessageSettings: BankMessageParserSettings,
     val accountBalanceSnapshots: List<AccountBalanceSnapshot>,
+    val accountLedgerEntries: List<AccountLedgerEntry>,
     val internalTransferRecords: List<InternalTransferRecord>,
     val merchantRules: List<MerchantRule>
 )

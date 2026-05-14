@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.musab.niqdah.domain.ai.AiFinanceDraftAction
 import com.musab.niqdah.domain.finance.AccountBalanceSnapshot
+import com.musab.niqdah.domain.finance.AccountLedgerRules
 import com.musab.niqdah.domain.finance.AccountKind
 import com.musab.niqdah.domain.finance.BankMessageImportHistory
 import com.musab.niqdah.domain.finance.BankMessageImportStatus
@@ -14,6 +15,7 @@ import com.musab.niqdah.domain.finance.BankMessageSourceSettings
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.DashboardMetrics
 import com.musab.niqdah.domain.finance.DebtTracker
+import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.DisciplineReminderScheduler
 import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.FinanceCalculator
@@ -37,6 +39,10 @@ import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
 import com.musab.niqdah.domain.finance.ReminderSettings
 import com.musab.niqdah.domain.finance.SaveResult
 import com.musab.niqdah.domain.finance.SavingsGoal
+import com.musab.niqdah.domain.finance.effectiveMinorUnits
+import com.musab.niqdah.domain.finance.majorToMinorUnits
+import com.musab.niqdah.domain.finance.minorUnitsToMajor
+import com.musab.niqdah.domain.finance.parseMoneyToMinorUnitsOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -190,6 +196,7 @@ class FinanceViewModel(
         }
 
         val parsedAmount = amount ?: return
+        val parsedAmountMinor = amountInput.toMoneyMinorOrNull() ?: return
         val parsedOccurredAt = occurredAt ?: return
         val now = System.currentTimeMillis()
         val transaction = ExpenseTransaction(
@@ -203,7 +210,8 @@ class FinanceViewModel(
             occurredAtMillis = parsedOccurredAt,
             yearMonth = FinanceDates.yearMonthFromMillis(parsedOccurredAt),
             createdAtMillis = existing?.createdAtMillis?.takeIf { it > 0L } ?: now,
-            updatedAtMillis = now
+            updatedAtMillis = now,
+            amountMinor = parsedAmountMinor
         )
 
         runSave(
@@ -289,6 +297,98 @@ class FinanceViewModel(
         )
     }
 
+    fun recordManualDeposit(
+        amountInput: String,
+        currencyInput: String,
+        accountKind: AccountKind,
+        depositType: DepositType,
+        currentBalanceAfterInput: String,
+        dateInput: String
+    ) {
+        val amountMinor = amountInput.toMoneyMinorOrNull()
+        val currentBalanceAfterMinor = currentBalanceAfterInput
+            .takeIf { it.isNotBlank() }
+            ?.toMoneyMinorOrNull()
+        val occurredAt = FinanceDates.parseDateInput(dateInput)
+        val currency = currencyInput.trim().uppercase(Locale.US).ifBlank { _uiState.value.data.profile.currency }
+        val validationError = when {
+            amountMinor == null || amountMinor <= 0L -> "Enter a valid deposit amount."
+            currentBalanceAfterInput.isNotBlank() && currentBalanceAfterMinor == null ->
+                "Enter a valid current balance after deposit."
+            occurredAt == null -> "Enter the deposit date as YYYY-MM-DD."
+            else -> null
+        }
+
+        if (validationError != null) {
+            showValidationError(validationError)
+            return
+        }
+
+        val parsedAmountMinor = amountMinor ?: return
+        val parsedOccurredAt = occurredAt ?: return
+        val now = System.currentTimeMillis()
+        val transactionId = "manual-deposit-${UUID.randomUUID()}"
+        val settings = _uiState.value.data.bankMessageSettings
+        val accountSuffix = when (accountKind) {
+            AccountKind.DAILY_USE -> settings.dailyUseAccountSuffix
+            AccountKind.SAVINGS -> settings.savingsAccountSuffix
+        }
+        val previousBalance = when (accountKind) {
+            AccountKind.DAILY_USE -> _uiState.value.data.latestDailyUseBalanceStatus
+            AccountKind.SAVINGS -> _uiState.value.data.latestSavingsBalanceStatus
+        }
+
+        runSave(
+            onSuccess = {
+                if (currentBalanceAfterMinor == null) {
+                    _uiState.update {
+                        it.copy(statusMessage = "Balance estimate updated. Confirm actual balance when available.")
+                    }
+                }
+            }
+        ) {
+            if (accountKind == AccountKind.SAVINGS || depositType == DepositType.TRANSFER) {
+                saveSavingsContribution(
+                    amount = minorUnitsToMajor(parsedAmountMinor),
+                    currency = currency,
+                    description = depositType.label,
+                    occurredAtMillis = parsedOccurredAt,
+                    now = now
+                )
+            } else {
+                financeRepository.upsertIncomeTransaction(
+                    IncomeTransaction(
+                        id = transactionId,
+                        amount = minorUnitsToMajor(parsedAmountMinor),
+                        amountMinor = parsedAmountMinor,
+                        currency = currency,
+                        source = depositType.label,
+                        note = "Manual ${depositType.label.lowercase(Locale.US)}",
+                        depositType = depositType,
+                        occurredAtMillis = parsedOccurredAt,
+                        yearMonth = FinanceDates.yearMonthFromMillis(parsedOccurredAt),
+                        createdAtMillis = now,
+                        updatedAtMillis = now
+                    )
+                )
+            }
+            financeRepository.upsertAccountLedgerEntry(
+                AccountLedgerRules.manualDepositEntry(
+                    accountKind = accountKind,
+                    accountSuffix = accountSuffix,
+                    amountMinor = parsedAmountMinor,
+                    balanceAfterMinor = currentBalanceAfterMinor,
+                    currency = currency,
+                    depositType = depositType,
+                    relatedTransactionId = transactionId,
+                    occurredAtMillis = parsedOccurredAt,
+                    nowMillis = now,
+                    previousBalance = previousBalance
+                )
+            )
+        }
+    }
+
     private fun saveImportedFinanceAction(
         type: ParsedBankMessageType,
         amountInput: String,
@@ -333,7 +433,8 @@ class FinanceViewModel(
                 necessity = necessity,
                 occurredAtMillis = parsedOccurredAt,
                 senderName = senderName,
-                now = now
+                now = now,
+                depositType = DepositType.OTHER_INCOME
             )
             if (result is SaveResult.Saved) {
                 learnMerchantRuleFromInputs(
@@ -407,6 +508,7 @@ class FinanceViewModel(
             financeRepository.upsertGoal(
                 goal.copy(
                     savedAmount = savedAmount,
+                    savedAmountMinor = savedAmountInput.toMoneyMinorOrNull() ?: majorToMinorUnits(savedAmount),
                     updatedAtMillis = System.currentTimeMillis()
                 )
             )
@@ -425,6 +527,10 @@ class FinanceViewModel(
             financeRepository.upsertDebt(
                 debt.copy(
                     remainingAmount = (debt.remainingAmount - payment).coerceAtLeast(0.0),
+                    remainingAmountMinor = (
+                        effectiveMinorUnits(debt.remainingAmountMinor, debt.remainingAmount) -
+                            (amountInput.toMoneyMinorOrNull() ?: majorToMinorUnits(payment))
+                        ).coerceAtLeast(0L),
                     updatedAtMillis = System.currentTimeMillis()
                 )
             )
@@ -469,15 +575,22 @@ class FinanceViewModel(
         val state = _uiState.value
         val profile = state.data.profile.copy(
             salary = parsedSalary,
+            salaryMinor = salaryInput.toMoneyMinorOrNull() ?: majorToMinorUnits(parsedSalary),
             extraIncome = parsedExtraIncome,
+            extraIncomeMinor = extraIncomeInput.toMoneyMinorOrNull() ?: majorToMinorUnits(parsedExtraIncome),
             monthlySavingsTarget = parsedSavingsTarget,
+            monthlySavingsTargetMinor = monthlySavingsTargetInput.toMoneyMinorOrNull()
+                ?: majorToMinorUnits(parsedSavingsTarget),
             currency = currencyInput.trim().uppercase(Locale.US),
             updatedAtMillis = now
         )
         val debt = DebtTracker(
             startingAmount = parsedStartingDebt,
+            startingAmountMinor = startingDebtInput.toMoneyMinorOrNull() ?: majorToMinorUnits(parsedStartingDebt),
             remainingAmount = parsedRemainingDebt,
+            remainingAmountMinor = remainingDebtInput.toMoneyMinorOrNull() ?: majorToMinorUnits(parsedRemainingDebt),
             monthlyAutoReduction = parsedExtraIncome,
+            monthlyAutoReductionMinor = extraIncomeInput.toMoneyMinorOrNull() ?: majorToMinorUnits(parsedExtraIncome),
             updatedAtMillis = now
         )
 
@@ -495,7 +608,11 @@ class FinanceViewModel(
                 showValidationError("Enter a valid budget for ${category.name}.")
                 return
             }
-            category.copy(monthlyBudget = amount, updatedAtMillis = System.currentTimeMillis())
+            category.copy(
+                monthlyBudget = amount,
+                monthlyBudgetMinor = inputs[category.id].orEmpty().toMoneyMinorOrNull() ?: majorToMinorUnits(amount),
+                updatedAtMillis = System.currentTimeMillis()
+            )
         }
 
         runSave {
@@ -608,6 +725,10 @@ class FinanceViewModel(
 
         val parsedMonthlySavingsTargetAmount = monthlySavingsTargetAmount ?: return
         val parsedJanuaryFundTargetAmount = januaryFundTargetAmount ?: return
+        val parsedMonthlySavingsTargetAmountMinor = monthlySavingsTargetAmountInput.toMoneyMinorOrNull()
+            ?: majorToMinorUnits(parsedMonthlySavingsTargetAmount)
+        val parsedJanuaryFundTargetAmountMinor = januaryFundTargetAmountInput.toMoneyMinorOrNull()
+            ?: majorToMinorUnits(parsedJanuaryFundTargetAmount)
         val now = System.currentTimeMillis()
         val current = _uiState.value.data
         val settings = ReminderSettings(
@@ -624,7 +745,9 @@ class FinanceViewModel(
             isAvoidCategoryWarningEnabled = isAvoidCategoryWarningEnabled,
             januaryTargetDate = januaryTargetDateInput.trim(),
             januaryFundTargetAmount = parsedJanuaryFundTargetAmount,
-            updatedAtMillis = now
+            updatedAtMillis = now,
+            monthlySavingsTargetAmountMinor = parsedMonthlySavingsTargetAmountMinor,
+            januaryFundTargetAmountMinor = parsedJanuaryFundTargetAmountMinor
         )
 
         runSave {
@@ -632,6 +755,7 @@ class FinanceViewModel(
             financeRepository.upsertProfile(
                 current.profile.copy(
                     monthlySavingsTarget = parsedMonthlySavingsTargetAmount,
+                    monthlySavingsTargetMinor = parsedMonthlySavingsTargetAmountMinor,
                     updatedAtMillis = now
                 )
             )
@@ -644,6 +768,7 @@ class FinanceViewModel(
                     financeRepository.upsertCategory(
                         category.copy(
                             monthlyBudget = parsedMonthlySavingsTargetAmount,
+                            monthlyBudgetMinor = parsedMonthlySavingsTargetAmountMinor,
                             updatedAtMillis = now
                         )
                     )
@@ -656,6 +781,7 @@ class FinanceViewModel(
                     financeRepository.upsertGoal(
                         goal.copy(
                             targetAmount = parsedJanuaryFundTargetAmount,
+                            targetAmountMinor = parsedJanuaryFundTargetAmountMinor,
                             updatedAtMillis = now
                         )
                     )
@@ -704,7 +830,8 @@ class FinanceViewModel(
             status = status,
             isNotificationEnabled = isNotificationEnabled,
             createdAtMillis = existing?.createdAtMillis?.takeIf { it > 0L } ?: now,
-            updatedAtMillis = now
+            updatedAtMillis = now,
+            amountMinor = amountInput.takeIf { it.isNotBlank() }?.toMoneyMinorOrNull()
         )
 
         runSave { financeRepository.upsertNecessaryItem(item) }
@@ -737,27 +864,32 @@ class FinanceViewModel(
         val existingContribution = state.data.transactions.firstOrNull {
             it.id == savingsImportTransactionId(yearMonth)
         }
+        val amountMinor = majorToMinorUnits(amount)
+        val existingAmountMinor = existingContribution?.let { effectiveMinorUnits(it.amountMinor, it.amount) } ?: 0L
         financeRepository.upsertTransaction(
             ExpenseTransaction(
                 id = existingContribution?.id ?: savingsImportTransactionId(yearMonth),
                 categoryId = state.data.categories.firstOrNull { it.type == com.musab.niqdah.domain.finance.CategoryType.SAVINGS }?.id
                     ?: FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID,
-                amount = (existingContribution?.amount ?: 0.0) + amount,
+                amount = minorUnitsToMajor(existingAmountMinor + amountMinor),
                 currency = currency,
                 note = description.trim().ifBlank { "Imported savings transfer" },
                 necessity = NecessityLevel.NECESSARY,
                 occurredAtMillis = existingContribution?.occurredAtMillis ?: occurredAtMillis,
                 yearMonth = yearMonth,
                 createdAtMillis = existingContribution?.createdAtMillis?.takeIf { it > 0L } ?: now,
-                updatedAtMillis = now
+                updatedAtMillis = now,
+                amountMinor = existingAmountMinor + amountMinor
             )
         )
 
         val primaryGoal = state.data.primaryGoal
         if (primaryGoal != null) {
+            val savedMinor = effectiveMinorUnits(primaryGoal.savedAmountMinor, primaryGoal.savedAmount) + amountMinor
             financeRepository.upsertGoal(
                 primaryGoal.copy(
-                    savedAmount = primaryGoal.savedAmount + amount,
+                    savedAmount = minorUnitsToMajor(savedMinor),
+                    savedAmountMinor = savedMinor,
                     updatedAtMillis = now
                 )
             )
@@ -773,8 +905,10 @@ class FinanceViewModel(
         necessity: NecessityLevel,
         occurredAtMillis: Long,
         senderName: String,
-        now: Long
+        now: Long,
+        depositType: DepositType = DepositType.OTHER_INCOME
     ): SaveResult {
+        val amountMinor = majorToMinorUnits(amount)
         when (type) {
             ParsedBankMessageType.EXPENSE -> {
                 financeRepository.upsertTransaction(
@@ -788,7 +922,8 @@ class FinanceViewModel(
                         occurredAtMillis = occurredAtMillis,
                         yearMonth = FinanceDates.yearMonthFromMillis(occurredAtMillis),
                         createdAtMillis = now,
-                        updatedAtMillis = now
+                        updatedAtMillis = now,
+                        amountMinor = amountMinor
                     )
                 )
                 return SaveResult.Saved(
@@ -807,7 +942,9 @@ class FinanceViewModel(
                         occurredAtMillis = occurredAtMillis,
                         yearMonth = FinanceDates.yearMonthFromMillis(occurredAtMillis),
                         createdAtMillis = now,
-                        updatedAtMillis = now
+                        updatedAtMillis = now,
+                        amountMinor = amountMinor,
+                        depositType = depositType
                     )
                 )
                 return SaveResult.Saved("Saved successfully.")
@@ -840,7 +977,8 @@ class FinanceViewModel(
                             "Not counted as spending.",
                             description.trim().ifBlank { "Imported internal transfer" }
                         ).distinct().joinToString("\n"),
-                        sourceMessageHash = ""
+                        sourceMessageHash = "",
+                        amountMinor = amountMinor
                     )
                 )
                 return SaveResult.Saved(
@@ -876,7 +1014,8 @@ class FinanceViewModel(
                         necessity = pendingImport.suggestedNecessity,
                         occurredAtMillis = pendingImport.occurredAtMillis,
                         senderName = pendingImport.senderName,
-                        now = now
+                        now = now,
+                        depositType = pendingImport.depositType
                     )
                 }
                 ParsedBankMessageType.INCOME -> {
@@ -889,7 +1028,8 @@ class FinanceViewModel(
                         necessity = pendingImport.suggestedNecessity,
                         occurredAtMillis = pendingImport.occurredAtMillis,
                         senderName = pendingImport.senderName,
-                        now = now
+                        now = now,
+                        depositType = pendingImport.depositType
                     )
                 }
                 ParsedBankMessageType.SAVINGS_TRANSFER -> {
@@ -959,8 +1099,10 @@ class FinanceViewModel(
         }
 
         if (result is SaveResult.Saved) {
+            upsertAccountLedgerEntryForImport(pendingImport, now)
             upsertBalanceSnapshotIfPresent(pendingImport, now)
             if (paired != null) {
+                upsertAccountLedgerEntryForImport(paired, now)
                 upsertBalanceSnapshotIfPresent(paired, now)
             }
             learnMerchantRuleIfNeeded(pendingImport)
@@ -1007,7 +1149,30 @@ class FinanceViewModel(
                 currency = pendingImport.availableBalanceCurrency.ifBlank { pendingImport.currency },
                 messageTimestampMillis = pendingImport.occurredAtMillis,
                 sourceMessageHash = pendingImport.messageHash,
-                createdAtMillis = now
+                createdAtMillis = now,
+                availableBalanceMinor = pendingImport.availableBalanceMinor ?: majorToMinorUnits(availableBalance)
+            )
+        )
+    }
+
+    private suspend fun upsertAccountLedgerEntryForImport(pendingImport: PendingBankImport, now: Long) {
+        val accountKind = when {
+            pendingImport.type == ParsedBankMessageType.SAVINGS_TRANSFER -> AccountKind.SAVINGS
+            pendingImport.sourceType == com.musab.niqdah.domain.finance.BankMessageSourceType.SAVINGS -> AccountKind.SAVINGS
+            pendingImport.type == ParsedBankMessageType.EXPENSE ||
+                pendingImport.type == ParsedBankMessageType.INCOME ||
+                pendingImport.type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT -> AccountKind.DAILY_USE
+            else -> return
+        }
+        val previousBalance = when (accountKind) {
+            AccountKind.DAILY_USE -> _uiState.value.data.latestDailyUseBalanceStatus
+            AccountKind.SAVINGS -> _uiState.value.data.latestSavingsBalanceStatus
+        }
+        financeRepository.upsertAccountLedgerEntry(
+            AccountLedgerRules.pendingImportEntry(
+                pendingImport = pendingImport,
+                previousBalance = previousBalance,
+                nowMillis = now
             )
         )
     }
@@ -1075,7 +1240,10 @@ class FinanceViewModel(
     }
 
     private fun String.toMoneyOrNull(): Double? =
-        trim().replace(",", "").toDoubleOrNull()
+        toMoneyMinorOrNull()?.let { minorUnitsToMajor(it) }
+
+    private fun String.toMoneyMinorOrNull(): Long? =
+        parseMoneyToMinorUnitsOrNull(this, _uiState.value.data.profile.currency.ifBlank { FinanceDefaults.DEFAULT_CURRENCY })
 
     private suspend fun learnMerchantRuleIfNeeded(pendingImport: PendingBankImport) {
         val state = _uiState.value

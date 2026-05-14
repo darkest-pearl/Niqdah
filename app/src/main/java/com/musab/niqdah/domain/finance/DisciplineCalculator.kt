@@ -19,10 +19,10 @@ object DisciplineCalculator {
         val savingsTarget = savingsTargetStatus(data, yearMonth)
         val categorySpending = categorySpending(data, yearMonth)
         val primaryGoal = data.primaryGoal
-        val currentSaved = primaryGoal?.savedAmount ?: 0.0
-        val targetAmount = data.reminderSettings.januaryFundTargetAmount.takeIf { it > 0.0 }
-            ?: primaryGoal?.targetAmount
-            ?: 0.0
+        val currentSavedMinor = primaryGoal?.let { effectiveMinorUnits(it.savedAmountMinor, it.savedAmount) } ?: 0L
+        val targetAmountMinor = data.reminderSettings.januaryFundTargetAmountMinor.takeIf { it > 0L }
+            ?: primaryGoal?.let { effectiveMinorUnits(it.targetAmountMinor, it.targetAmount) }
+            ?: 0L
 
         return DisciplineStatus(
             savingsTarget = savingsTarget,
@@ -33,33 +33,39 @@ object DisciplineCalculator {
             januaryCountdown = januaryCountdown(
                 targetDateInput = data.reminderSettings.januaryTargetDate,
                 goalName = primaryGoal?.name ?: "Savings goal",
-                currentSaved = currentSaved,
-                targetAmount = targetAmount,
+                currentSaved = minorUnitsToMajor(currentSavedMinor),
+                targetAmount = minorUnitsToMajor(targetAmountMinor),
                 today = today
             )
         )
     }
 
     fun savingsTargetStatus(data: FinanceData, yearMonth: String): SavingsTargetStatus {
-        val target = data.reminderSettings.monthlySavingsTargetAmount.takeIf { it > 0.0 }
-            ?: data.profile.monthlySavingsTarget
-        val saved = savingsProgress(data, yearMonth)
+        val targetMinor = data.reminderSettings.monthlySavingsTargetAmountMinor.takeIf { it > 0L }
+            ?: effectiveMinorUnits(data.profile.monthlySavingsTargetMinor, data.profile.monthlySavingsTarget)
+        val savedMinor = savingsProgressMinor(data, yearMonth)
+        val target = minorUnitsToMajor(targetMinor)
+        val saved = minorUnitsToMajor(savedMinor)
         return SavingsTargetStatus(
             targetAmount = target,
             savedThisMonth = saved,
             shortfall = savingsShortfall(target, saved),
-            progress = ratio(saved, target)
+            progress = ratio(savedMinor, targetMinor)
         )
     }
 
     fun savingsProgress(data: FinanceData, yearMonth: String): Double {
+        return minorUnitsToMajor(savingsProgressMinor(data, yearMonth))
+    }
+
+    private fun savingsProgressMinor(data: FinanceData, yearMonth: String): Long {
         val categoryById = data.categories.associateBy { it.id }
         return data.transactions
             .filter { transaction ->
                 transaction.yearMonth == yearMonth &&
                     categoryById[transaction.categoryId]?.type == CategoryType.SAVINGS
             }
-            .sumOf { it.amount }
+            .sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
     }
 
     fun savingsShortfall(targetAmount: Double, savedThisMonth: Double): Double =
@@ -67,14 +73,15 @@ object DisciplineCalculator {
 
     fun categorySpending(data: FinanceData, yearMonth: String): List<CategorySpend> =
         data.categories.map { category ->
-            val spent = data.transactions
+            val spentMinor = data.transactions
                 .filter { it.yearMonth == yearMonth && it.categoryId == category.id }
-                .sumOf { it.amount }
+                .sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
+            val budgetMinor = effectiveMinorUnits(category.monthlyBudgetMinor, category.monthlyBudget)
             CategorySpend(
                 category = category,
-                spent = spent,
-                remaining = category.monthlyBudget - spent,
-                isOverspent = spent > category.monthlyBudget
+                spent = minorUnitsToMajor(spentMinor),
+                remaining = minorUnitsToMajor(budgetMinor - spentMinor),
+                isOverspent = spentMinor > budgetMinor
             )
         }
 
@@ -110,20 +117,28 @@ object DisciplineCalculator {
         val categoryById = data.categories.associateBy { it.id }
         val monthTransactions = data.transactions.filter { it.yearMonth == yearMonth }
         val monthIncomeTransactions = data.incomeTransactions.filter { it.yearMonth == yearMonth }
-        val totalIncome = data.profile.salary + data.profile.extraIncome + monthIncomeTransactions.sumOf { it.amount }
-        val totalSpent = monthTransactions
+        val totalIncomeMinor = effectiveMinorUnits(data.profile.salaryMinor, data.profile.salary) +
+            effectiveMinorUnits(data.profile.extraIncomeMinor, data.profile.extraIncome) +
+            monthIncomeTransactions.sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
+        val totalSpentMinor = monthTransactions
             .filter { transaction -> categoryById[transaction.categoryId]?.type != CategoryType.SAVINGS }
-            .sumOf { it.amount }
-        val fixedReserveRemaining = data.categories
+            .sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
+        val fixedReserveRemainingMinor = data.categories
             .filter { it.type == CategoryType.FIXED }
             .sumOf { category ->
-                val spent = monthTransactions
+                val spentMinor = monthTransactions
                     .filter { it.categoryId == category.id }
-                    .sumOf { it.amount }
-                max(0.0, category.monthlyBudget - spent)
+                    .sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
+                max(0L, effectiveMinorUnits(category.monthlyBudgetMinor, category.monthlyBudget) - spentMinor)
             }
 
-        return totalIncome - totalSpent - fixedReserveRemaining - savingsTarget - data.debt.monthlyAutoReduction
+        return minorUnitsToMajor(
+            totalIncomeMinor -
+                totalSpentMinor -
+                fixedReserveRemainingMinor -
+                majorToMinorUnits(savingsTarget) -
+                effectiveMinorUnits(data.debt.monthlyAutoReductionMinor, data.debt.monthlyAutoReduction)
+        )
     }
 
     fun januaryCountdown(
@@ -195,13 +210,15 @@ object DisciplineCalculator {
         }
 
     private fun avoidSpendingThisMonth(data: FinanceData, yearMonth: String): Double =
-        data.transactions
+        minorUnitsToMajor(
+            data.transactions
             .filter { transaction ->
                 transaction.yearMonth == yearMonth &&
                     (transaction.necessity == NecessityLevel.AVOID ||
                         transaction.categoryId == FinanceDefaults.AVOID_CATEGORY_ID)
             }
-            .sumOf { it.amount }
+            .sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
+        )
 
     private fun warningMessage(categoryName: String, level: CategoryBudgetWarningLevel): String =
         when (level) {
@@ -225,4 +242,7 @@ object DisciplineCalculator {
 
     private fun ratio(value: Double, target: Double): Double =
         if (target <= 0.0) 0.0 else (value / target).coerceIn(0.0, 1.0)
+
+    private fun ratio(valueMinor: Long, targetMinor: Long): Double =
+        if (targetMinor <= 0L) 0.0 else (valueMinor.toDouble() / targetMinor.toDouble()).coerceIn(0.0, 1.0)
 }

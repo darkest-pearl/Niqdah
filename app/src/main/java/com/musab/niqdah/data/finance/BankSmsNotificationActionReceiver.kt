@@ -18,10 +18,13 @@ import com.musab.niqdah.R
 import com.musab.niqdah.core.firebase.FirebaseProvider
 import com.musab.niqdah.data.firestore.FirestoreCollections
 import com.musab.niqdah.domain.finance.AccountBalanceSnapshot
+import com.musab.niqdah.domain.finance.AccountLedgerEntry
+import com.musab.niqdah.domain.finance.AccountLedgerRules
 import com.musab.niqdah.domain.finance.AccountKind
 import com.musab.niqdah.domain.finance.BankMessageImportHistory
 import com.musab.niqdah.domain.finance.BankMessageImportStatus
 import com.musab.niqdah.domain.finance.BankMessageSourceType
+import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.FinanceDates
 import com.musab.niqdah.domain.finance.FinanceDefaults
@@ -35,6 +38,9 @@ import com.musab.niqdah.domain.finance.PendingBankImport
 import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
 import com.musab.niqdah.domain.finance.SaveResult
 import com.musab.niqdah.domain.finance.SavingsGoal
+import com.musab.niqdah.domain.finance.effectiveMinorUnits
+import com.musab.niqdah.domain.finance.majorToMinorUnits
+import com.musab.niqdah.domain.finance.minorUnitsToMajor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -161,8 +167,10 @@ private class PendingBankImportNotificationHandler(
             }
         }
         upsertBalanceSnapshotIfPresent(db, pendingImport, now)
+        upsertAccountLedgerEntry(db, pendingImport, now)
         if (paired != null) {
             upsertBalanceSnapshotIfPresent(db, paired, now)
+            upsertAccountLedgerEntry(db, paired, now)
         }
         PendingBankImportSaveRules.idsToRemoveAfterSuccessfulSave(pendingImport, paired).forEach { id ->
             pendingBankImportsCollection(db).document(id).delete().awaitValue()
@@ -258,6 +266,7 @@ private class PendingBankImportNotificationHandler(
                     id = "",
                     categoryId = pendingImport.suggestedCategoryId.orEmpty(),
                     amount = amount,
+                    amountMinor = pendingImport.amountMinor ?: majorToMinorUnits(amount),
                     currency = pendingImport.currency,
                     note = pendingImport.noteWithReviewContext(),
                     necessity = pendingImport.suggestedNecessity,
@@ -282,9 +291,11 @@ private class PendingBankImportNotificationHandler(
                 IncomeTransaction(
                     id = "",
                     amount = amount,
+                    amountMinor = pendingImport.amountMinor ?: majorToMinorUnits(amount),
                     currency = pendingImport.currency,
                     source = pendingImport.senderName.trim(),
                     note = pendingImport.noteWithReviewContext(),
+                    depositType = pendingImport.depositType,
                     occurredAtMillis = pendingImport.occurredAtMillis,
                     yearMonth = FinanceDates.yearMonthFromMillis(pendingImport.occurredAtMillis),
                     createdAtMillis = now,
@@ -304,6 +315,9 @@ private class PendingBankImportNotificationHandler(
         val transactionId = "bank-message-savings-$yearMonth"
         val transactionSnapshot = transactionsCollection(db).document(transactionId).get().awaitValue()
         val existingAmount = (transactionSnapshot.get("amount") as? Number)?.toDouble() ?: 0.0
+        val existingAmountMinor = (transactionSnapshot.get("amountMinor") as? Number)?.toLong()
+            ?: majorToMinorUnits(existingAmount)
+        val amountMinor = pendingImport.amountMinor ?: majorToMinorUnits(amount)
         val existingCreatedAt = (transactionSnapshot.get("createdAtMillis") as? Number)?.toLong() ?: now
         val existingOccurredAt = (transactionSnapshot.get("occurredAtMillis") as? Number)?.toLong()
             ?: pendingImport.occurredAtMillis
@@ -314,7 +328,8 @@ private class PendingBankImportNotificationHandler(
                 ExpenseTransaction(
                     id = transactionId,
                     categoryId = FinanceDefaults.MARRIAGE_SAVINGS_CATEGORY_ID,
-                    amount = existingAmount + amount,
+                    amount = minorUnitsToMajor(existingAmountMinor + amountMinor),
+                    amountMinor = existingAmountMinor + amountMinor,
                     currency = pendingImport.currency,
                     note = pendingImport.noteWithReviewContext().ifBlank { "Imported savings transfer" },
                     necessity = NecessityLevel.NECESSARY,
@@ -332,11 +347,36 @@ private class PendingBankImportNotificationHandler(
         goalsCollection(db)
             .document(FinanceDefaults.MARRIAGE_GOAL_ID)
             .set(
-                goal.copy(
-                    savedAmount = goal.savedAmount + amount,
-                    updatedAtMillis = now
-                ).toFirestore()
+                run {
+                    val savedAmountMinor = effectiveMinorUnits(goal.savedAmountMinor, goal.savedAmount) + amountMinor
+                    goal.copy(
+                        savedAmount = minorUnitsToMajor(savedAmountMinor),
+                        savedAmountMinor = savedAmountMinor,
+                        updatedAtMillis = now
+                    )
+                }.toFirestore()
             )
+            .awaitValue()
+    }
+
+    private suspend fun upsertAccountLedgerEntry(
+        db: FirebaseFirestore,
+        pendingImport: PendingBankImport,
+        now: Long
+    ) {
+        if (pendingImport.type == ParsedBankMessageType.INFORMATIONAL ||
+            pendingImport.type == ParsedBankMessageType.UNKNOWN
+        ) {
+            return
+        }
+        val entry = AccountLedgerRules.pendingImportEntry(
+            pendingImport = pendingImport,
+            previousBalance = null,
+            nowMillis = now
+        )
+        accountLedgerEntriesCollection(db)
+            .document(entry.id)
+            .set(entry.toFirestore())
             .awaitValue()
     }
 
@@ -381,7 +421,8 @@ private class PendingBankImportNotificationHandler(
             currency = pendingImport.availableBalanceCurrency.ifBlank { pendingImport.currency },
             messageTimestampMillis = pendingImport.occurredAtMillis,
             sourceMessageHash = pendingImport.messageHash,
-            createdAtMillis = now
+            createdAtMillis = now,
+            availableBalanceMinor = pendingImport.availableBalanceMinor ?: majorToMinorUnits(availableBalance)
         )
         accountBalanceSnapshotsCollection(db)
             .document(snapshot.documentId())
@@ -447,6 +488,9 @@ private class PendingBankImportNotificationHandler(
     private fun accountBalanceSnapshotsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.ACCOUNT_BALANCE_SNAPSHOTS)
 
+    private fun accountLedgerEntriesCollection(db: FirebaseFirestore): CollectionReference =
+        userDocument(db).collection(FirestoreCollections.ACCOUNT_LEDGER_ENTRIES)
+
     private fun internalTransferRecordsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.INTERNAL_TRANSFER_RECORDS)
 
@@ -489,7 +533,16 @@ private class PendingBankImportNotificationHandler(
                 ?: ParsedBankMessageConfidence.LOW,
             receivedAtMillis = long("receivedAtMillis"),
             createdAtMillis = long("createdAtMillis"),
-            updatedAtMillis = long("updatedAtMillis")
+            updatedAtMillis = long("updatedAtMillis"),
+            amountMinor = nullableLong("amountMinor") ?: nullableDouble("amount")?.let { majorToMinorUnits(it) },
+            availableBalanceMinor = nullableLong("availableBalanceMinor")
+                ?: nullableDouble("availableBalance")?.let { majorToMinorUnits(it) },
+            originalForeignAmountMinor = nullableLong("originalForeignAmountMinor")
+                ?: nullableDouble("originalForeignAmount")?.let { majorToMinorUnits(it) },
+            inferredAccountDebitMinor = nullableLong("inferredAccountDebitMinor")
+                ?: nullableDouble("inferredAccountDebit")?.let { majorToMinorUnits(it) },
+            depositType = DepositType.entries.firstOrNull { it.name == getString("depositType") }
+                ?: DepositType.OTHER_INCOME
         )
     }
 
@@ -503,7 +556,15 @@ private class PendingBankImportNotificationHandler(
                 targetAmount = nullableDouble("targetAmount") ?: default.targetAmount,
                 savedAmount = nullableDouble("savedAmount") ?: default.savedAmount,
                 createdAtMillis = long("createdAtMillis", default.createdAtMillis),
-                updatedAtMillis = long("updatedAtMillis", default.updatedAtMillis)
+                updatedAtMillis = long("updatedAtMillis", default.updatedAtMillis),
+                targetAmountMinor = long(
+                    "targetAmountMinor",
+                    majorToMinorUnits(nullableDouble("targetAmount") ?: default.targetAmount)
+                ),
+                savedAmountMinor = long(
+                    "savedAmountMinor",
+                    majorToMinorUnits(nullableDouble("savedAmount") ?: default.savedAmount)
+                )
             )
         }
 
@@ -511,6 +572,7 @@ private class PendingBankImportNotificationHandler(
         mapOf(
             "categoryId" to categoryId,
             "amount" to amount,
+            "amountMinor" to effectiveMinorUnits(amountMinor, amount),
             "currency" to currency,
             "note" to note,
             "necessity" to necessity.name,
@@ -523,9 +585,11 @@ private class PendingBankImportNotificationHandler(
     private fun IncomeTransaction.toFirestore(): Map<String, Any> =
         mapOf(
             "amount" to amount,
+            "amountMinor" to effectiveMinorUnits(amountMinor, amount),
             "currency" to currency,
             "source" to source,
             "note" to note,
+            "depositType" to depositType.name,
             "occurredAtMillis" to occurredAtMillis,
             "yearMonth" to yearMonth,
             "createdAtMillis" to createdAtMillis,
@@ -545,15 +609,32 @@ private class PendingBankImportNotificationHandler(
             "accountKind" to accountKind.name,
             "sender" to sender,
             "availableBalance" to availableBalance,
+            "availableBalanceMinor" to effectiveMinorUnits(availableBalanceMinor, availableBalance),
             "currency" to currency,
             "messageTimestampMillis" to messageTimestampMillis,
             "sourceMessageHash" to sourceMessageHash,
             "createdAtMillis" to createdAtMillis
         )
 
+    private fun AccountLedgerEntry.toFirestore(): Map<String, Any?> =
+        mapOf(
+            "accountKind" to accountKind.name,
+            "accountSuffix" to accountSuffix,
+            "eventType" to eventType.name,
+            "amountMinor" to amountMinor,
+            "balanceAfterMinor" to balanceAfterMinor,
+            "currency" to currency,
+            "confidence" to confidence.name,
+            "source" to source.name,
+            "relatedTransactionId" to relatedTransactionId,
+            "createdAtMillis" to createdAtMillis,
+            "note" to note
+        )
+
     private fun InternalTransferRecord.toFirestore(): Map<String, Any?> =
         mapOf(
             "amount" to amount,
+            "amountMinor" to effectiveMinorUnits(amountMinor, amount),
             "currency" to currency,
             "sourceAccountSuffix" to sourceAccountSuffix,
             "targetAccountSuffix" to targetAccountSuffix,
@@ -571,7 +652,9 @@ private class PendingBankImportNotificationHandler(
         mapOf(
             "name" to name,
             "targetAmount" to targetAmount,
+            "targetAmountMinor" to effectiveMinorUnits(targetAmountMinor, targetAmount),
             "savedAmount" to savedAmount,
+            "savedAmountMinor" to effectiveMinorUnits(savedAmountMinor, savedAmount),
             "createdAtMillis" to createdAtMillis,
             "updatedAtMillis" to updatedAtMillis
         )
@@ -586,7 +669,11 @@ private class PendingBankImportNotificationHandler(
             currency = getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
             messageTimestampMillis = long("messageTimestampMillis"),
             sourceMessageHash = getString("sourceMessageHash") ?: id.substringAfter("-", id),
-            createdAtMillis = long("createdAtMillis")
+            createdAtMillis = long("createdAtMillis"),
+            availableBalanceMinor = long(
+                "availableBalanceMinor",
+                majorToMinorUnits(nullableDouble("availableBalance") ?: 0.0)
+            )
         )
     }
 
@@ -619,6 +706,9 @@ private class PendingBankImportNotificationHandler(
 
     private fun DocumentSnapshot.nullableDouble(field: String): Double? =
         (get(field) as? Number)?.toDouble()
+
+    private fun DocumentSnapshot.nullableLong(field: String): Long? =
+        (get(field) as? Number)?.toLong()
 
     private fun DocumentSnapshot.long(field: String, default: Long = 0L): Long =
         (get(field) as? Number)?.toLong() ?: default

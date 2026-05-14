@@ -11,13 +11,16 @@ import com.musab.niqdah.domain.ai.AiChatRepository
 import com.musab.niqdah.domain.ai.AiChatRole
 import com.musab.niqdah.domain.ai.AiChatTokenVerificationException
 import com.musab.niqdah.domain.ai.AiFinanceContext
+import com.musab.niqdah.domain.finance.AccountBalanceStatus
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.CategoryBudgetWarning
+import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.DisciplineCalculator
 import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.NecessaryItemDue
 import com.musab.niqdah.domain.finance.SavingsGoal
+import com.musab.niqdah.domain.finance.formatMinorUnits
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -148,7 +151,7 @@ class FirebaseAiChatRepository(context: Context) : AiChatRepository {
             "content" to content
         )
 
-    private fun AiFinanceContext.toPayload(): Map<String, Any> {
+    private fun AiFinanceContext.toPayload(): Map<String, Any?> {
         val data = financeData
         val categoryById = data.categories.associateBy { it.id }
         val recentTransactions = data.transactions
@@ -159,6 +162,9 @@ class FirebaseAiChatRepository(context: Context) : AiChatRepository {
             .sortedByDescending { it.occurredAtMillis }
             .take(recentTransactionLimit)
             .map { it.toPayload() }
+        val monthDeposits = data.incomeTransactions
+            .filter { it.yearMonth == currentMonthSnapshot.yearMonth }
+        val salaryDeposits = monthDeposits.filter { it.depositType == DepositType.SALARY }
         val disciplineStatus = DisciplineCalculator.status(
             data = data,
             yearMonth = currentMonthSnapshot.yearMonth
@@ -171,6 +177,31 @@ class FirebaseAiChatRepository(context: Context) : AiChatRepository {
                 "extraIncome" to data.profile.extraIncome,
                 "monthlySavingsTarget" to data.profile.monthlySavingsTarget
             ),
+            "accountBalances" to mapOf(
+                "dailyUse" to data.latestDailyUseBalanceStatus?.toPayload(),
+                "savings" to data.latestSavingsBalanceStatus?.toPayload()
+            ),
+            "salaryAndDepositsThisMonth" to mapOf(
+                "salaryRecorded" to salaryDeposits.isNotEmpty(),
+                "depositCount" to monthDeposits.size,
+                "totalDeposits" to monthDeposits.sumOf { it.amount },
+                "items" to monthDeposits.map { it.toPayload() }
+            ),
+            "accountLedgerSummary" to data.accountLedgerEntries
+                .sortedByDescending { it.createdAtMillis }
+                .take(8)
+                .map {
+                    mapOf(
+                        "accountKind" to it.accountKind.name,
+                        "eventType" to it.eventType.name,
+                        "amount" to formatMinorUnits(it.amountMinor, it.currency),
+                        "balanceAfter" to it.balanceAfterMinor?.let { balance -> formatMinorUnits(balance, it.currency) },
+                        "confidence" to it.confidence.name,
+                        "source" to it.source.name,
+                        "createdAtMillis" to it.createdAtMillis,
+                        "note" to it.note
+                    )
+                },
             "debt" to mapOf(
                 "startingAmount" to data.debt.startingAmount,
                 "remainingAmount" to data.debt.remainingAmount,
@@ -189,6 +220,13 @@ class FirebaseAiChatRepository(context: Context) : AiChatRepository {
             ),
             "categoryBudgets" to data.categories.map { it.toPayload() },
             "savingsGoals" to data.goals.map { it.toPayload() },
+            "primaryGoalProgress" to data.primaryGoal?.let { goal ->
+                mapOf(
+                    "name" to goal.name,
+                    "savedAmount" to goal.savedAmount,
+                    "targetAmount" to goal.targetAmount
+                )
+            },
             "disciplineStatus" to mapOf(
                 "currentSavingsProgress" to mapOf(
                     "savedThisMonth" to disciplineStatus.savingsTarget.savedThisMonth,
@@ -255,6 +293,18 @@ class FirebaseAiChatRepository(context: Context) : AiChatRepository {
             "status" to item.status.label
         )
 
+    private fun AccountBalanceStatus.toPayload(): Map<String, Any> =
+        mapOf(
+            "accountKind" to accountKind.name,
+            "accountSuffix" to accountSuffix,
+            "amount" to formatMinorUnits(amountMinor, currency),
+            "currency" to currency,
+            "confidence" to confidence.name,
+            "lastUpdatedMillis" to lastUpdatedMillis,
+            "source" to source.name,
+            "note" to note
+        )
+
     private fun ExpenseTransaction.toPayload(categoryName: String): Map<String, Any> =
         mapOf(
             "categoryId" to categoryId,
@@ -272,6 +322,7 @@ class FirebaseAiChatRepository(context: Context) : AiChatRepository {
             "currency" to currency,
             "source" to source,
             "note" to note,
+            "depositType" to depositType.name,
             "yearMonth" to yearMonth,
             "occurredAtMillis" to occurredAtMillis
         )

@@ -9,6 +9,8 @@ Niqdah is a financial-control app for people who want calm, direct help before m
 - Calm hierarchy: the most important number or decision appears first.
 - Clean density: screens should be organized and useful without feeling crowded.
 - Premium cards: use restrained elevation, 8dp radius, strong spacing, and purposeful color.
+- Exact money: currency must preserve cents and display two decimals everywhere.
+- Account honesty: balances should say whether they are confirmed, estimated, or need review.
 - Plain language: avoid shame, hype, and generic finance jargon.
 - Personal wording: use the user's goal name, debt state, category choices, and currency.
 - Privacy-visible design: SMS and AI boundaries should be easy to find and understand.
@@ -38,6 +40,12 @@ Existing users with old seeded data see a migration screen and can keep their cu
 - SMS content is never sent to OpenAI or the backend.
 - The Android app does not contain an OpenAI API key.
 - AI Chat can suggest saveable actions, but the app UI must present them for review.
+
+## Balance And Deposit Direction
+
+Niqdah should treat salary, deposits, refunds, and transfers as first-class events. A bank SMS can confirm that money moved without confirming the latest balance; the UI should reflect that difference instead of overstating certainty.
+
+Daily-use and savings balances should be derived from a ledger of confirmed SMS balances, manual confirmations, estimated deposits/debits, transfers, and adjustments. The dashboard should surface confidence clearly and invite confirmation when the app is estimating.
 
 ## Future Positioning
 

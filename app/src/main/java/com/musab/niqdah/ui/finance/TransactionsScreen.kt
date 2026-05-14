@@ -43,7 +43,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.musab.niqdah.domain.finance.AccountKind
 import com.musab.niqdah.domain.finance.BudgetCategory
+import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.FinanceDates
 import com.musab.niqdah.domain.finance.IncomeTransaction
@@ -55,6 +57,7 @@ import com.musab.niqdah.domain.finance.PendingBankImport
 import com.musab.niqdah.domain.finance.PendingBankImportDisplayItem
 import com.musab.niqdah.domain.finance.PendingBankImportDisplayRules
 import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
+import com.musab.niqdah.domain.finance.majorToMinorUnits
 
 private sealed interface TransactionTimelineItem {
     val key: String
@@ -85,6 +88,7 @@ fun TransactionsScreen(
     onDeleteIncomeTransaction: (String) -> Unit,
     onPreviewBankMessage: (String, String) -> ParsedBankMessage,
     onSaveImportedBankMessage: (ParsedBankMessageType, String, String, String?, String, NecessityLevel, String, String) -> Unit,
+    onRecordManualDeposit: (String, String, AccountKind, DepositType, String, String) -> Unit,
     onSavePendingBankImport: (PendingBankImport) -> Unit,
     onUpdatePendingBankImport: (PendingBankImport) -> Unit,
     onDismissPendingBankImport: (PendingBankImport) -> Unit,
@@ -93,6 +97,7 @@ fun TransactionsScreen(
     onClearError: () -> Unit
 ) {
     var showDialog by remember { mutableStateOf(false) }
+    var showDepositDialog by remember { mutableStateOf(false) }
     var editingTransaction by remember { mutableStateOf<ExpenseTransaction?>(null) }
     val categories = uiState.data.categories
     val categoryById = categories.associateBy { it.id }
@@ -176,6 +181,19 @@ fun TransactionsScreen(
                     )
                     Text(text = "Add transaction")
                 }
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !uiState.isSaving,
+                    shape = MaterialTheme.shapes.medium,
+                    onClick = { showDepositDialog = true }
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Add,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp).size(18.dp)
+                    )
+                    Text(text = "Record salary/deposit")
+                }
             }
         }
         item {
@@ -232,6 +250,17 @@ fun TransactionsScreen(
             onSave = { existing, amount, categoryId, note, necessity, dateInput ->
                 onSaveTransaction(existing, amount, categoryId, note, necessity, dateInput)
                 showDialog = false
+            }
+        )
+    }
+
+    if (showDepositDialog) {
+        DepositDialog(
+            currency = currency,
+            onDismiss = { showDepositDialog = false },
+            onSave = { amount, selectedCurrency, accountKind, depositType, balanceAfter, dateInput ->
+                onRecordManualDeposit(amount, selectedCurrency, accountKind, depositType, balanceAfter, dateInput)
+                showDepositDialog = false
             }
         )
     }
@@ -833,11 +862,14 @@ private fun PendingBankImportEditDialog(
                         localError = error
                         return@Button
                     }
+                    val safeAmount = parsedAmount ?: return@Button
+                    val safeOccurredAt = occurredAt ?: return@Button
                     val selectedCategory = categories.firstOrNull { it.id == categoryId }
                     onSave(
                         pendingImport.copy(
-                            amount = parsedAmount,
-                            occurredAtMillis = occurredAt ?: pendingImport.occurredAtMillis,
+                            amount = safeAmount,
+                            amountMinor = majorToMinorUnits(safeAmount),
+                            occurredAtMillis = safeOccurredAt,
                             suggestedCategoryId = categoryId,
                             suggestedCategoryName = selectedCategory?.name ?: pendingImport.suggestedCategoryName,
                             suggestedNecessity = necessity,
@@ -1276,6 +1308,149 @@ private fun TransactionDialog(
                         localError = error
                     } else {
                         onSave(existing, amount, categoryId, note, necessity, dateInput)
+                    }
+                }
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+@Composable
+private fun DepositDialog(
+    currency: String,
+    onDismiss: () -> Unit,
+    onSave: (String, String, AccountKind, DepositType, String, String) -> Unit
+) {
+    var amount by remember { mutableStateOf("") }
+    var selectedCurrency by remember { mutableStateOf(currency.ifBlank { "AED" }) }
+    var accountKind by remember { mutableStateOf(AccountKind.DAILY_USE) }
+    var depositType by remember { mutableStateOf(DepositType.SALARY) }
+    var currentBalanceAfter by remember { mutableStateOf("") }
+    var dateInput by remember { mutableStateOf(FinanceDates.todayInput()) }
+    var accountExpanded by remember { mutableStateOf(false) }
+    var typeExpanded by remember { mutableStateOf(false) }
+    var localError by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Record salary/deposit") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = amount,
+                    onValueChange = {
+                        amount = it
+                        localError = null
+                    },
+                    label = { Text("Amount") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = selectedCurrency,
+                    onValueChange = { selectedCurrency = it.uppercase().take(3) },
+                    label = { Text("Currency") },
+                    singleLine = true
+                )
+                Box {
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium,
+                        onClick = { accountExpanded = true }
+                    ) {
+                        Text(text = "Account: ${accountKind.label}", modifier = Modifier.weight(1f))
+                        Icon(imageVector = Icons.Rounded.KeyboardArrowDown, contentDescription = null)
+                    }
+                    DropdownMenu(expanded = accountExpanded, onDismissRequest = { accountExpanded = false }) {
+                        AccountKind.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label) },
+                                onClick = {
+                                    accountKind = option
+                                    accountExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Box {
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium,
+                        onClick = { typeExpanded = true }
+                    ) {
+                        Text(text = "Type: ${depositType.label}", modifier = Modifier.weight(1f))
+                        Icon(imageVector = Icons.Rounded.KeyboardArrowDown, contentDescription = null)
+                    }
+                    DropdownMenu(expanded = typeExpanded, onDismissRequest = { typeExpanded = false }) {
+                        DepositType.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label) },
+                                onClick = {
+                                    depositType = option
+                                    typeExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = currentBalanceAfter,
+                    onValueChange = {
+                        currentBalanceAfter = it
+                        localError = null
+                    },
+                    label = { Text("Current balance after deposit") },
+                    supportingText = { Text("Optional") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = dateInput,
+                    onValueChange = {
+                        dateInput = it
+                        localError = null
+                    },
+                    label = { Text("Date") },
+                    supportingText = { Text("YYYY-MM-DD") },
+                    singleLine = true
+                )
+                localError?.let { message ->
+                    Text(
+                        text = message,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val error = when {
+                        amount.trim().replace(",", "").toDoubleOrNull()?.let { it > 0.0 } != true ->
+                            "Enter a valid deposit amount."
+                        currentBalanceAfter.isNotBlank() &&
+                            currentBalanceAfter.trim().replace(",", "").toDoubleOrNull() == null ->
+                            "Enter a valid current balance."
+                        FinanceDates.parseDateInput(dateInput) == null -> "Enter the date as YYYY-MM-DD."
+                        else -> null
+                    }
+                    if (error != null) {
+                        localError = error
+                    } else {
+                        onSave(amount, selectedCurrency, accountKind, depositType, currentBalanceAfter, dateInput)
                     }
                 }
             ) {

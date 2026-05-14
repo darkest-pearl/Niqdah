@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,9 +18,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
@@ -41,14 +44,17 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.musab.niqdah.domain.finance.AccountBalanceStatus
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.BankMessageParserSettings
 import com.musab.niqdah.domain.finance.MerchantRule
@@ -56,6 +62,16 @@ import com.musab.niqdah.domain.finance.NecessaryItem
 import com.musab.niqdah.domain.finance.NecessaryItemRecurrence
 import com.musab.niqdah.domain.finance.NecessaryItemStatus
 import com.musab.niqdah.domain.finance.ReminderSettings
+
+private enum class SettingsPage(val title: String, val subtitle: String) {
+    MAIN("Settings", "Profile, accounts, privacy, and release controls."),
+    PROFILE("Profile & Setup", "Personal plan, income, savings target, debt, and currency."),
+    ACCOUNTS("Accounts & Bank SMS", "Daily-use account, savings account, SMS senders, suffixes, and permissions."),
+    CATEGORIES("Categories & Budgets", "Budget categories, merchant rules, and necessary items."),
+    REMINDERS("Reminders & Discipline", "Savings, debt, overspending, and goal countdown reminders."),
+    PRIVACY("Privacy & Security", "What Niqdah reads, stores, and sends to AI."),
+    APP("App & Release", "Account, version, build, and release notes.")
+}
 
 @Composable
 fun SettingsScreen(
@@ -73,6 +89,7 @@ fun SettingsScreen(
     onClearError: () -> Unit
 ) {
     val context = LocalContext.current
+    var currentPage by rememberSaveable { mutableStateOf(SettingsPage.MAIN) }
     val profile = uiState.data.profile
     val debt = uiState.data.debt
     var salary by remember { mutableStateOf("") }
@@ -186,233 +203,330 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            FinanceHeader(
-                title = "Settings",
-                subtitle = "Tune the profile, monthly budget, currency, and debt baseline."
-            )
+            FinanceHeader(title = currentPage.title, subtitle = currentPage.subtitle)
+        }
+        if (currentPage != SettingsPage.MAIN) {
+            item {
+                OutlinedButton(onClick = { currentPage = SettingsPage.MAIN }) {
+                    Icon(imageVector = Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = null)
+                    Text(text = "Back to Settings", modifier = Modifier.padding(start = 8.dp))
+                }
+            }
         }
         item { ErrorBanner(message = uiState.errorMessage, onDismiss = onClearError) }
         item { StatusBanner(message = uiState.statusMessage, onDismiss = onClearError) }
         if (uiState.isLoading) {
             item { LoadingStateCard(message = "Loading settings...") }
         }
-        item {
-            AccountCard(
-                userEmail = userEmail,
-                isSaving = uiState.isSaving,
-                onLogout = onLogout
-            )
-        }
-        item {
-            SetupChecklistCard(
-                userEmail = userEmail,
-                bankMessageSettings = uiState.data.bankMessageSettings,
-                reminderSettings = uiState.data.reminderSettings,
-                isSmsPermissionGranted = isSmsPermissionGranted,
-                isNotificationPermissionGranted = isNotificationPermissionGranted
-            )
-        }
-        item {
-            InfoNoteCard(
-                title = "Privacy note",
-                lines = listOf(
-                    "Niqdah reads only new bank SMS from configured senders.",
-                    "Niqdah does not read your old SMS inbox.",
-                    "Niqdah does not send SMS content to AI.",
-                    "AI receives financial summaries and context only."
-                )
-            )
-        }
-        item {
-            ProfileSettingsCard(
-                salary = salary,
-                onSalaryChange = { salary = it },
-                extraIncome = extraIncome,
-                onExtraIncomeChange = { extraIncome = it },
-                savingsTarget = savingsTarget,
-                onSavingsTargetChange = { savingsTarget = it },
-                currency = currency,
-                onCurrencyChange = { currency = it },
-                startingDebt = startingDebt,
-                onStartingDebtChange = { startingDebt = it },
-                remainingDebt = remainingDebt,
-                onRemainingDebtChange = { remainingDebt = it },
-                isSaving = uiState.isSaving,
-                onSave = {
-                    onUpdateProfileAndDebt(
-                        salary,
-                        extraIncome,
-                        savingsTarget,
-                        currency,
-                        startingDebt,
-                        remainingDebt
+
+        when (currentPage) {
+            SettingsPage.MAIN -> {
+                item {
+                    AccountCard(userEmail = userEmail, isSaving = uiState.isSaving, onLogout = onLogout)
+                }
+                item {
+                    SetupChecklistCard(
+                        userEmail = userEmail,
+                        bankMessageSettings = uiState.data.bankMessageSettings,
+                        reminderSettings = uiState.data.reminderSettings,
+                        isSmsPermissionGranted = isSmsPermissionGranted,
+                        isNotificationPermissionGranted = isNotificationPermissionGranted
                     )
                 }
-            )
-        }
-        item {
-            BankMessageSourcesCard(
-                isAutomaticSmsImportEnabled = isAutomaticSmsImportEnabled,
-                onAutomaticSmsImportEnabledChange = { enabled ->
-                    when {
-                        !enabled -> isAutomaticSmsImportEnabled = false
-                        !isSmsPermissionGranted -> smsPermissionLauncher.launch(Manifest.permission.RECEIVE_SMS)
-                        !isNotificationPermissionGranted &&
-                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        else -> isAutomaticSmsImportEnabled = true
+                item {
+                    SettingsMenuCard(
+                        title = SettingsPage.PROFILE.title,
+                        body = "Personal plan, income, fixed expenses, debt, savings goals, and currency.",
+                        onClick = { currentPage = SettingsPage.PROFILE }
+                    )
+                }
+                item {
+                    SettingsMenuCard(
+                        title = SettingsPage.ACCOUNTS.title,
+                        body = "Daily-use and savings account setup, senders, suffixes, and permissions.",
+                        onClick = { currentPage = SettingsPage.ACCOUNTS }
+                    )
+                }
+                item {
+                    SettingsMenuCard(
+                        title = SettingsPage.CATEGORIES.title,
+                        body = "Budgets, learned merchant rules, and necessary items.",
+                        onClick = { currentPage = SettingsPage.CATEGORIES }
+                    )
+                }
+                item {
+                    SettingsMenuCard(
+                        title = SettingsPage.REMINDERS.title,
+                        body = "Savings reminders, missed savings checks, overspending warnings, and goal countdown.",
+                        onClick = { currentPage = SettingsPage.REMINDERS }
+                    )
+                }
+                item {
+                    SettingsMenuCard(
+                        title = SettingsPage.PRIVACY.title,
+                        body = "SMS privacy, AI context rules, and Firebase data notes.",
+                        onClick = { currentPage = SettingsPage.PRIVACY }
+                    )
+                }
+                item {
+                    SettingsMenuCard(
+                        title = SettingsPage.APP.title,
+                        body = "Version, build type, account, and release/debug information.",
+                        onClick = { currentPage = SettingsPage.APP }
+                    )
+                }
+            }
+            SettingsPage.PROFILE -> {
+                item {
+                    ProfileSettingsCard(
+                        salary = salary,
+                        onSalaryChange = { salary = it },
+                        extraIncome = extraIncome,
+                        onExtraIncomeChange = { extraIncome = it },
+                        savingsTarget = savingsTarget,
+                        onSavingsTargetChange = { savingsTarget = it },
+                        currency = currency,
+                        onCurrencyChange = { currency = it },
+                        startingDebt = startingDebt,
+                        onStartingDebtChange = { startingDebt = it },
+                        remainingDebt = remainingDebt,
+                        onRemainingDebtChange = { remainingDebt = it },
+                        isSaving = uiState.isSaving,
+                        onSave = {
+                            onUpdateProfileAndDebt(
+                                salary,
+                                extraIncome,
+                                savingsTarget,
+                                currency,
+                                startingDebt,
+                                remainingDebt
+                            )
+                        }
+                    )
+                }
+            }
+            SettingsPage.ACCOUNTS -> {
+                item {
+                    BankMessageSourcesCard(
+                        isAutomaticSmsImportEnabled = isAutomaticSmsImportEnabled,
+                        onAutomaticSmsImportEnabledChange = { enabled ->
+                            when {
+                                !enabled -> isAutomaticSmsImportEnabled = false
+                                !isSmsPermissionGranted -> smsPermissionLauncher.launch(Manifest.permission.RECEIVE_SMS)
+                                !isNotificationPermissionGranted &&
+                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
+                                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                else -> isAutomaticSmsImportEnabled = true
+                            }
+                        },
+                        isSmsPermissionGranted = isSmsPermissionGranted,
+                        isNotificationPermissionGranted = isNotificationPermissionGranted,
+                        dailyUseBalance = balanceStatusText(uiState.data.latestDailyUseBalanceStatus),
+                        savingsBalance = balanceStatusText(uiState.data.latestSavingsBalanceStatus),
+                        lastIgnoredSender = uiState.data.bankMessageSettings.lastIgnoredSender,
+                        lastIgnoredReason = uiState.data.bankMessageSettings.lastIgnoredReason,
+                        lastParsedBankMessageAtMillis = uiState.data.bankMessageSettings.lastParsedBankMessageAtMillis,
+                        dailySenderName = dailySenderName,
+                        onDailySenderNameChange = { dailySenderName = it },
+                        dailyUseAccountSuffix = dailyUseAccountSuffix,
+                        onDailyUseAccountSuffixChange = { dailyUseAccountSuffix = it.filter { char -> char.isDigit() }.takeLast(4) },
+                        isDailyParserEnabled = isDailyParserEnabled,
+                        onDailyParserEnabledChange = { isDailyParserEnabled = it },
+                        savingsSenderName = savingsSenderName,
+                        onSavingsSenderNameChange = { savingsSenderName = it },
+                        savingsAccountSuffix = savingsAccountSuffix,
+                        onSavingsAccountSuffixChange = { savingsAccountSuffix = it.filter { char -> char.isDigit() }.takeLast(4) },
+                        isSavingsParserEnabled = isSavingsParserEnabled,
+                        onSavingsParserEnabledChange = { isSavingsParserEnabled = it },
+                        isMerchantLearningEnabled = isMerchantLearningEnabled,
+                        onMerchantLearningEnabledChange = { isMerchantLearningEnabled = it },
+                        isInternalTransferReminderEnabled = isInternalTransferReminderEnabled,
+                        onInternalTransferReminderEnabledChange = { isInternalTransferReminderEnabled = it },
+                        internalTransferReminderThresholdMinutes = internalTransferReminderThresholdMinutes,
+                        onInternalTransferReminderThresholdChange = { internalTransferReminderThresholdMinutes = it },
+                        merchantRules = uiState.data.merchantRules,
+                        debitKeywords = debitKeywords,
+                        onDebitKeywordsChange = { debitKeywords = it },
+                        creditKeywords = creditKeywords,
+                        onCreditKeywordsChange = { creditKeywords = it },
+                        savingsTransferKeywords = savingsTransferKeywords,
+                        onSavingsTransferKeywordsChange = { savingsTransferKeywords = it },
+                        isSaving = uiState.isSaving,
+                        onSave = {
+                            onUpdateBankMessageSettings(
+                                isAutomaticSmsImportEnabled && isSmsPermissionGranted,
+                                dailySenderName,
+                                isDailyParserEnabled,
+                                savingsSenderName,
+                                isSavingsParserEnabled,
+                                debitKeywords,
+                                creditKeywords,
+                                savingsTransferKeywords,
+                                dailyUseAccountSuffix,
+                                savingsAccountSuffix,
+                                isMerchantLearningEnabled,
+                                isInternalTransferReminderEnabled,
+                                internalTransferReminderThresholdMinutes
+                            )
+                        }
+                    )
+                }
+            }
+            SettingsPage.CATEGORIES -> {
+                item {
+                    SectionHeader(
+                        title = "Category budgets",
+                        subtitle = "Set monthly limits with exact cents when needed."
+                    )
+                }
+                items(uiState.data.categories, key = { it.id }) { category ->
+                    CategoryBudgetField(
+                        category = category,
+                        value = categoryBudgets[category.id].orEmpty(),
+                        onValueChange = { value -> categoryBudgets = categoryBudgets + (category.id to value) }
+                    )
+                }
+                item {
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !uiState.isSaving,
+                        shape = MaterialTheme.shapes.medium,
+                        onClick = { onUpdateCategoryBudgets(categoryBudgets) }
+                    ) {
+                        Text(if (uiState.isSaving) "Saving..." else "Save category budgets")
                     }
-                },
-                isSmsPermissionGranted = isSmsPermissionGranted,
-                isNotificationPermissionGranted = isNotificationPermissionGranted,
-                dailyUseBalance = uiState.data.latestDailyUseBalance?.let {
-                    "${formatMoney(it.availableBalance, it.currency)} at ${formatTransactionDateTime(it.messageTimestampMillis)}"
-                } ?: "Not known",
-                savingsBalance = uiState.data.latestSavingsBalance?.let {
-                    "${formatMoney(it.availableBalance, it.currency)} at ${formatTransactionDateTime(it.messageTimestampMillis)}"
-                } ?: "Not known",
-                lastIgnoredSender = uiState.data.bankMessageSettings.lastIgnoredSender,
-                lastIgnoredReason = uiState.data.bankMessageSettings.lastIgnoredReason,
-                lastParsedBankMessageAtMillis = uiState.data.bankMessageSettings.lastParsedBankMessageAtMillis,
-                dailySenderName = dailySenderName,
-                onDailySenderNameChange = { dailySenderName = it },
-                dailyUseAccountSuffix = dailyUseAccountSuffix,
-                onDailyUseAccountSuffixChange = { dailyUseAccountSuffix = it.filter { char -> char.isDigit() }.takeLast(4) },
-                isDailyParserEnabled = isDailyParserEnabled,
-                onDailyParserEnabledChange = { isDailyParserEnabled = it },
-                savingsSenderName = savingsSenderName,
-                onSavingsSenderNameChange = { savingsSenderName = it },
-                savingsAccountSuffix = savingsAccountSuffix,
-                onSavingsAccountSuffixChange = { savingsAccountSuffix = it.filter { char -> char.isDigit() }.takeLast(4) },
-                isSavingsParserEnabled = isSavingsParserEnabled,
-                onSavingsParserEnabledChange = { isSavingsParserEnabled = it },
-                isMerchantLearningEnabled = isMerchantLearningEnabled,
-                onMerchantLearningEnabledChange = { isMerchantLearningEnabled = it },
-                isInternalTransferReminderEnabled = isInternalTransferReminderEnabled,
-                onInternalTransferReminderEnabledChange = { isInternalTransferReminderEnabled = it },
-                internalTransferReminderThresholdMinutes = internalTransferReminderThresholdMinutes,
-                onInternalTransferReminderThresholdChange = { internalTransferReminderThresholdMinutes = it },
-                merchantRules = uiState.data.merchantRules,
-                debitKeywords = debitKeywords,
-                onDebitKeywordsChange = { debitKeywords = it },
-                creditKeywords = creditKeywords,
-                onCreditKeywordsChange = { creditKeywords = it },
-                savingsTransferKeywords = savingsTransferKeywords,
-                onSavingsTransferKeywordsChange = { savingsTransferKeywords = it },
-                isSaving = uiState.isSaving,
-                onSave = {
-                    onUpdateBankMessageSettings(
-                        isAutomaticSmsImportEnabled && isSmsPermissionGranted,
-                        dailySenderName,
-                        isDailyParserEnabled,
-                        savingsSenderName,
-                        isSavingsParserEnabled,
-                        debitKeywords,
-                        creditKeywords,
-                        savingsTransferKeywords,
-                        dailyUseAccountSuffix,
-                        savingsAccountSuffix,
-                        isMerchantLearningEnabled,
-                        isInternalTransferReminderEnabled,
-                        internalTransferReminderThresholdMinutes
+                }
+                item {
+                    NecessaryItemsCard(
+                        items = uiState.data.necessaryItems,
+                        currency = uiState.data.profile.currency,
+                        isSaving = uiState.isSaving,
+                        onSaveNecessaryItem = onSaveNecessaryItem,
+                        onUpdateNecessaryItemStatus = onUpdateNecessaryItemStatus,
+                        onDeleteNecessaryItem = onDeleteNecessaryItem
                     )
                 }
-            )
-        }
-        item {
-            ReminderSettingsCard(
-                isMonthlySavingsReminderEnabled = isMonthlySavingsReminderEnabled,
-                onMonthlySavingsReminderEnabledChange = { isMonthlySavingsReminderEnabled = it },
-                monthlySavingsReminderDay = monthlySavingsReminderDay,
-                onMonthlySavingsReminderDayChange = { value ->
-                    monthlySavingsReminderDay = value.filter { char -> char.isDigit() }.take(2)
-                },
-                monthlySavingsReminderHour = monthlySavingsReminderHour,
-                onMonthlySavingsReminderHourChange = { value ->
-                    monthlySavingsReminderHour = value.filter { char -> char.isDigit() }.take(2)
-                },
-                monthlySavingsReminderMinute = monthlySavingsReminderMinute,
-                onMonthlySavingsReminderMinuteChange = { value ->
-                    monthlySavingsReminderMinute = value.filter { char -> char.isDigit() }.take(2)
-                },
-                reminderSavingsTarget = reminderSavingsTarget,
-                onReminderSavingsTargetChange = { reminderSavingsTarget = it },
-                isMissedSavingsReminderEnabled = isMissedSavingsReminderEnabled,
-                onMissedSavingsReminderEnabledChange = { isMissedSavingsReminderEnabled = it },
-                missedSavingsCheckDay = missedSavingsCheckDay,
-                onMissedSavingsCheckDayChange = { value ->
-                    missedSavingsCheckDay = value.filter { char -> char.isDigit() }.take(2)
-                },
-                missedSavingsReminderHour = missedSavingsReminderHour,
-                onMissedSavingsReminderHourChange = { value ->
-                    missedSavingsReminderHour = value.filter { char -> char.isDigit() }.take(2)
-                },
-                missedSavingsReminderMinute = missedSavingsReminderMinute,
-                onMissedSavingsReminderMinuteChange = { value ->
-                    missedSavingsReminderMinute = value.filter { char -> char.isDigit() }.take(2)
-                },
-                areOverspendingWarningsEnabled = areOverspendingWarningsEnabled,
-                onOverspendingWarningsEnabledChange = { areOverspendingWarningsEnabled = it },
-                isAvoidCategoryWarningEnabled = isAvoidCategoryWarningEnabled,
-                onAvoidCategoryWarningEnabledChange = { isAvoidCategoryWarningEnabled = it },
-                januaryTargetDate = januaryTargetDate,
-                onJanuaryTargetDateChange = { januaryTargetDate = it },
-                januaryFundTarget = januaryFundTarget,
-                onJanuaryFundTargetChange = { januaryFundTarget = it },
-                isSaving = uiState.isSaving,
-                onSave = {
-                    onUpdateReminderSettings(
-                        isMonthlySavingsReminderEnabled,
-                        monthlySavingsReminderDay,
-                        monthlySavingsReminderHour,
-                        monthlySavingsReminderMinute,
-                        reminderSavingsTarget,
-                        isMissedSavingsReminderEnabled,
-                        missedSavingsCheckDay,
-                        missedSavingsReminderHour,
-                        missedSavingsReminderMinute,
-                        areOverspendingWarningsEnabled,
-                        isAvoidCategoryWarningEnabled,
-                        januaryTargetDate,
-                        januaryFundTarget
+            }
+            SettingsPage.REMINDERS -> {
+                item {
+                    ReminderSettingsCard(
+                        isMonthlySavingsReminderEnabled = isMonthlySavingsReminderEnabled,
+                        onMonthlySavingsReminderEnabledChange = { isMonthlySavingsReminderEnabled = it },
+                        monthlySavingsReminderDay = monthlySavingsReminderDay,
+                        onMonthlySavingsReminderDayChange = { value -> monthlySavingsReminderDay = value.filter { char -> char.isDigit() }.take(2) },
+                        monthlySavingsReminderHour = monthlySavingsReminderHour,
+                        onMonthlySavingsReminderHourChange = { value -> monthlySavingsReminderHour = value.filter { char -> char.isDigit() }.take(2) },
+                        monthlySavingsReminderMinute = monthlySavingsReminderMinute,
+                        onMonthlySavingsReminderMinuteChange = { value -> monthlySavingsReminderMinute = value.filter { char -> char.isDigit() }.take(2) },
+                        reminderSavingsTarget = reminderSavingsTarget,
+                        onReminderSavingsTargetChange = { reminderSavingsTarget = it },
+                        isMissedSavingsReminderEnabled = isMissedSavingsReminderEnabled,
+                        onMissedSavingsReminderEnabledChange = { isMissedSavingsReminderEnabled = it },
+                        missedSavingsCheckDay = missedSavingsCheckDay,
+                        onMissedSavingsCheckDayChange = { value -> missedSavingsCheckDay = value.filter { char -> char.isDigit() }.take(2) },
+                        missedSavingsReminderHour = missedSavingsReminderHour,
+                        onMissedSavingsReminderHourChange = { value -> missedSavingsReminderHour = value.filter { char -> char.isDigit() }.take(2) },
+                        missedSavingsReminderMinute = missedSavingsReminderMinute,
+                        onMissedSavingsReminderMinuteChange = { value -> missedSavingsReminderMinute = value.filter { char -> char.isDigit() }.take(2) },
+                        areOverspendingWarningsEnabled = areOverspendingWarningsEnabled,
+                        onOverspendingWarningsEnabledChange = { areOverspendingWarningsEnabled = it },
+                        isAvoidCategoryWarningEnabled = isAvoidCategoryWarningEnabled,
+                        onAvoidCategoryWarningEnabledChange = { isAvoidCategoryWarningEnabled = it },
+                        januaryTargetDate = januaryTargetDate,
+                        onJanuaryTargetDateChange = { januaryTargetDate = it },
+                        januaryFundTarget = januaryFundTarget,
+                        onJanuaryFundTargetChange = { januaryFundTarget = it },
+                        isSaving = uiState.isSaving,
+                        onSave = {
+                            onUpdateReminderSettings(
+                                isMonthlySavingsReminderEnabled,
+                                monthlySavingsReminderDay,
+                                monthlySavingsReminderHour,
+                                monthlySavingsReminderMinute,
+                                reminderSavingsTarget,
+                                isMissedSavingsReminderEnabled,
+                                missedSavingsCheckDay,
+                                missedSavingsReminderHour,
+                                missedSavingsReminderMinute,
+                                areOverspendingWarningsEnabled,
+                                isAvoidCategoryWarningEnabled,
+                                januaryTargetDate,
+                                januaryFundTarget
+                            )
+                        }
                     )
                 }
-            )
-        }
-        item {
-            NecessaryItemsCard(
-                items = uiState.data.necessaryItems,
-                currency = uiState.data.profile.currency,
-                isSaving = uiState.isSaving,
-                onSaveNecessaryItem = onSaveNecessaryItem,
-                onUpdateNecessaryItemStatus = onUpdateNecessaryItemStatus,
-                onDeleteNecessaryItem = onDeleteNecessaryItem
-            )
-        }
-        item {
-            Text(text = "Category budgets", style = MaterialTheme.typography.titleLarge)
-        }
-        items(uiState.data.categories, key = { it.id }) { category ->
-            CategoryBudgetField(
-                category = category,
-                value = categoryBudgets[category.id].orEmpty(),
-                onValueChange = { value ->
-                    categoryBudgets = categoryBudgets + (category.id to value)
+            }
+            SettingsPage.PRIVACY -> {
+                item {
+                    InfoNoteCard(
+                        title = "Privacy commitments",
+                        lines = listOf(
+                            "Niqdah reads only new bank SMS after permission and only from configured senders.",
+                            "Old inbox SMS is not read and READ_SMS is not requested.",
+                            "Automatic imports store rawMessage as an empty string.",
+                            "Raw SMS content is not sent to AI. AI receives financial summaries only.",
+                            "Firebase stores your account data under your signed-in user ID."
+                        )
+                    )
                 }
-            )
-        }
-        item {
-            Button(
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !uiState.isSaving,
-                shape = MaterialTheme.shapes.medium,
-                onClick = { onUpdateCategoryBudgets(categoryBudgets) }
-            ) {
-                Text(if (uiState.isSaving) "Saving..." else "Save category budgets")
+            }
+            SettingsPage.APP -> {
+                item {
+                    AccountCard(userEmail = userEmail, isSaving = uiState.isSaving, onLogout = onLogout)
+                }
+                item {
+                    InfoNoteCard(
+                        title = "Release info",
+                        lines = listOf(
+                            "Niqdah finance build: debug/release from Gradle variant.",
+                            "Bank SMS import keeps automatic rawMessage empty.",
+                            "OpenAI keys are not stored in the Android app."
+                        )
+                    )
+                }
             }
         }
     }
 }
+
+@Composable
+private fun SettingsMenuCard(
+    title: String,
+    body: String,
+    onClick: () -> Unit,
+    trailingIcon: ImageVector = Icons.Rounded.ChevronRight
+) {
+    PremiumCard(
+        modifier = Modifier.clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(text = title, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = body,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            Icon(imageVector = trailingIcon, contentDescription = null)
+        }
+    }
+}
+
+private fun balanceStatusText(status: AccountBalanceStatus?): String =
+    status?.let {
+        "${formatMoneyMinor(it.amountMinor, it.currency)} - ${it.confidence.label} at ${
+            formatTransactionDateTime(it.lastUpdatedMillis)
+        }"
+    } ?: "Not known"
 
 @Composable
 private fun AccountCard(userEmail: String?, isSaving: Boolean, onLogout: () -> Unit) {

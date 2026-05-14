@@ -31,6 +31,7 @@ import com.musab.niqdah.domain.finance.BankMessageSourceType
 import com.musab.niqdah.domain.finance.BankMessageSourceSettings
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.CategoryType
+import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.InternalTransferNotificationRules
 import com.musab.niqdah.domain.finance.InternalTransferNotificationState
@@ -38,6 +39,7 @@ import com.musab.niqdah.domain.finance.MerchantRule
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
 import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
+import com.musab.niqdah.domain.finance.majorToMinorUnits
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
@@ -306,7 +308,14 @@ class BankSmsImportProcessor(
                     } ?: com.musab.niqdah.domain.finance.ParsedBankMessageConfidence.LOW,
                     receivedAtMillis = (snapshot.get("receivedAtMillis") as? Number)?.toLong() ?: 0L,
                     createdAtMillis = (snapshot.get("createdAtMillis") as? Number)?.toLong() ?: 0L,
-                    updatedAtMillis = (snapshot.get("updatedAtMillis") as? Number)?.toLong() ?: 0L
+                    updatedAtMillis = (snapshot.get("updatedAtMillis") as? Number)?.toLong() ?: 0L,
+                    amountMinor = (snapshot.get("amountMinor") as? Number)?.toLong(),
+                    availableBalanceMinor = (snapshot.get("availableBalanceMinor") as? Number)?.toLong(),
+                    originalForeignAmountMinor = (snapshot.get("originalForeignAmountMinor") as? Number)?.toLong(),
+                    inferredAccountDebitMinor = (snapshot.get("inferredAccountDebitMinor") as? Number)?.toLong(),
+                    depositType = DepositType.entries.firstOrNull {
+                        it.name == snapshot.getString("depositType")
+                    } ?: DepositType.OTHER_INCOME
                 )
             }
 
@@ -483,12 +492,16 @@ class BankSmsImportProcessor(
             "sourceType" to sourceType.name,
             "type" to type.name,
             "amount" to amount,
+            "amountMinor" to amountMinor,
             "currency" to currency,
             "availableBalance" to availableBalance,
+            "availableBalanceMinor" to availableBalanceMinor,
             "availableBalanceCurrency" to availableBalanceCurrency,
             "originalForeignAmount" to originalForeignAmount,
+            "originalForeignAmountMinor" to originalForeignAmountMinor,
             "originalForeignCurrency" to originalForeignCurrency,
             "inferredAccountDebit" to inferredAccountDebit,
+            "inferredAccountDebitMinor" to inferredAccountDebitMinor,
             "isAmountInferredFromBalance" to isAmountInferredFromBalance,
             "reviewNote" to reviewNote,
             "merchantName" to merchantName,
@@ -502,6 +515,7 @@ class BankSmsImportProcessor(
             "suggestedCategoryName" to suggestedCategoryName,
             "suggestedNecessity" to suggestedNecessity.name,
             "confidence" to confidence.name,
+            "depositType" to depositType.name,
             "receivedAtMillis" to receivedAtMillis,
             "createdAtMillis" to createdAtMillis,
             "updatedAtMillis" to updatedAtMillis
@@ -512,6 +526,7 @@ class BankSmsImportProcessor(
             "accountKind" to accountKind.name,
             "sender" to sender,
             "availableBalance" to availableBalance,
+            "availableBalanceMinor" to availableBalanceMinor,
             "currency" to currency,
             "messageTimestampMillis" to messageTimestampMillis,
             "sourceMessageHash" to sourceMessageHash,
@@ -532,7 +547,8 @@ class BankSmsImportProcessor(
             currency = availableBalanceCurrency.ifBlank { FinanceDefaults.DEFAULT_CURRENCY },
             messageTimestampMillis = occurredAtMillis,
             sourceMessageHash = messageHash,
-            createdAtMillis = now
+            createdAtMillis = now,
+            availableBalanceMinor = availableBalanceMinor ?: majorToMinorUnits(balance)
         )
     }
 

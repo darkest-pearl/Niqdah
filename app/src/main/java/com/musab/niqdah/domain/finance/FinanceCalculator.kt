@@ -8,86 +8,100 @@ object FinanceCalculator {
         val monthIncomeTransactions = data.incomeTransactions.filter { it.yearMonth == yearMonth }
         val categoryById = data.categories.associateBy { it.id }
         val disciplineStatus = DisciplineCalculator.status(data, yearMonth, now)
-        val monthlySavingsTarget = disciplineStatus.savingsTarget.targetAmount
-        val totalIncome = data.profile.salary + data.profile.extraIncome + monthIncomeTransactions.sumOf { it.amount }
-        val totalSpent = monthTransactions
+        val monthlySavingsTargetMinor = majorToMinorUnits(disciplineStatus.savingsTarget.targetAmount)
+        val totalIncomeMinor = effectiveMinorUnits(data.profile.salaryMinor, data.profile.salary) +
+            effectiveMinorUnits(data.profile.extraIncomeMinor, data.profile.extraIncome) +
+            monthIncomeTransactions.sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
+        val totalSpentMinor = monthTransactions
             .filter { transaction -> categoryById[transaction.categoryId]?.type != CategoryType.SAVINGS }
-            .sumOf { it.amount }
+            .sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
 
         val categorySpending = data.categories.map { category ->
-            val spent = monthTransactions
+            val spentMinor = monthTransactions
                 .filter { it.categoryId == category.id }
-                .sumOf { it.amount }
+                .sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
+            val budgetMinor = effectiveMinorUnits(category.monthlyBudgetMinor, category.monthlyBudget)
             CategorySpend(
                 category = category,
-                spent = spent,
-                remaining = category.monthlyBudget - spent,
-                isOverspent = spent > category.monthlyBudget
+                spent = minorUnitsToMajor(spentMinor),
+                remaining = minorUnitsToMajor(budgetMinor - spentMinor),
+                isOverspent = spentMinor > budgetMinor
             )
         }
 
-        val fixedReserveRemaining = categorySpending
-            .filter { it.category.type == CategoryType.FIXED }
-            .sumOf { max(0.0, it.remaining) }
+        val fixedReserveRemainingMinor = data.categories
+            .filter { it.type == CategoryType.FIXED }
+            .sumOf { category ->
+                val spentMinor = monthTransactions
+                    .filter { it.categoryId == category.id }
+                    .sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
+                val budgetMinor = effectiveMinorUnits(category.monthlyBudgetMinor, category.monthlyBudget)
+                max(0L, budgetMinor - spentMinor)
+            }
 
-        val remainingSafeToSpend = totalIncome -
-            totalSpent -
-            fixedReserveRemaining -
-            monthlySavingsTarget -
-            data.debt.monthlyAutoReduction
+        val remainingSafeToSpendMinor = totalIncomeMinor -
+            totalSpentMinor -
+            fixedReserveRemainingMinor -
+            monthlySavingsTargetMinor -
+            effectiveMinorUnits(data.debt.monthlyAutoReductionMinor, data.debt.monthlyAutoReduction)
 
         val primaryGoal = data.primaryGoal
         val primaryGoalName = primaryGoal?.name ?: "Savings goal"
-        val primarySaved = primaryGoal?.savedAmount ?: 0.0
-        val primaryTarget = data.reminderSettings.januaryFundTargetAmount.takeIf { it > 0.0 }
-            ?: primaryGoal?.targetAmount
-            ?: 0.0
-        val savingsThisMonth = monthTransactions
+        val primarySavedMinor = primaryGoal?.let { effectiveMinorUnits(it.savedAmountMinor, it.savedAmount) } ?: 0L
+        val primaryTargetMinor = data.reminderSettings.januaryFundTargetAmountMinor.takeIf { it > 0L }
+            ?: primaryGoal?.let { effectiveMinorUnits(it.targetAmountMinor, it.targetAmount) }
+            ?: 0L
+        val savingsThisMonthMinor = monthTransactions
             .filter { transaction -> categoryById[transaction.categoryId]?.type == CategoryType.SAVINGS }
-            .sumOf { it.amount }
+            .sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
 
-        val debtPaid = max(0.0, data.debt.startingAmount - data.debt.remainingAmount)
-        val debtProgress = ratio(debtPaid, data.debt.startingAmount)
+        val debtStartingMinor = effectiveMinorUnits(data.debt.startingAmountMinor, data.debt.startingAmount)
+        val debtRemainingMinor = effectiveMinorUnits(data.debt.remainingAmountMinor, data.debt.remainingAmount)
+        val debtPaidMinor = max(0L, debtStartingMinor - debtRemainingMinor)
+        val debtProgress = ratio(debtPaidMinor, debtStartingMinor)
         val overspendingAlerts = categorySpending.filter { it.isOverspent }
         val healthSummary = buildHealthSummary(
-            safeToSpend = remainingSafeToSpend,
+            safeToSpend = minorUnitsToMajor(remainingSafeToSpendMinor),
             overspendingAlerts = overspendingAlerts,
-            savingsProgress = ratio(savingsThisMonth, monthlySavingsTarget)
+            savingsProgress = ratio(savingsThisMonthMinor, monthlySavingsTargetMinor)
         )
 
         val snapshot = MonthlySnapshot(
             yearMonth = yearMonth,
-            totalIncome = totalIncome,
-            totalSpent = totalSpent,
-            remainingSafeToSpend = remainingSafeToSpend,
-            marriageFundSaved = primarySaved,
-            marriageFundTarget = primaryTarget,
-            debtRemaining = data.debt.remainingAmount,
-            debtStarting = data.debt.startingAmount,
+            totalIncome = minorUnitsToMajor(totalIncomeMinor),
+            totalSpent = minorUnitsToMajor(totalSpentMinor),
+            remainingSafeToSpend = minorUnitsToMajor(remainingSafeToSpendMinor),
+            marriageFundSaved = minorUnitsToMajor(primarySavedMinor),
+            marriageFundTarget = minorUnitsToMajor(primaryTargetMinor),
+            debtRemaining = minorUnitsToMajor(debtRemainingMinor),
+            debtStarting = minorUnitsToMajor(debtStartingMinor),
             healthSummary = healthSummary,
             generatedAtMillis = now
         )
 
         return DashboardMetrics(
-            totalMonthlyIncome = totalIncome,
-            totalSpent = totalSpent,
-            fixedReserveRemaining = fixedReserveRemaining,
-            remainingSafeToSpend = remainingSafeToSpend,
-            marriageFundProgress = ratio(primarySaved, primaryTarget),
+            totalMonthlyIncome = minorUnitsToMajor(totalIncomeMinor),
+            totalSpent = minorUnitsToMajor(totalSpentMinor),
+            fixedReserveRemaining = minorUnitsToMajor(fixedReserveRemainingMinor),
+            remainingSafeToSpend = minorUnitsToMajor(remainingSafeToSpendMinor),
+            marriageFundProgress = ratio(primarySavedMinor, primaryTargetMinor),
             primaryGoalName = primaryGoalName,
-            primaryGoalProgress = ratio(primarySaved, primaryTarget),
-            savingsTargetProgress = ratio(savingsThisMonth, monthlySavingsTarget),
+            primaryGoalProgress = ratio(primarySavedMinor, primaryTargetMinor),
+            savingsTargetProgress = ratio(savingsThisMonthMinor, monthlySavingsTargetMinor),
             debtProgress = debtProgress,
             categorySpending = categorySpending,
             overspendingAlerts = overspendingAlerts,
             healthSummary = healthSummary,
             snapshot = snapshot,
-            disciplineStatus = disciplineStatus.copy(safeToSpendAmount = remainingSafeToSpend)
+            disciplineStatus = disciplineStatus.copy(safeToSpendAmount = minorUnitsToMajor(remainingSafeToSpendMinor))
         )
     }
 
     private fun ratio(value: Double, target: Double): Double =
         if (target <= 0.0) 0.0 else (value / target).coerceIn(0.0, 1.0)
+
+    private fun ratio(valueMinor: Long, targetMinor: Long): Double =
+        if (targetMinor <= 0L) 0.0 else (valueMinor.toDouble() / targetMinor.toDouble()).coerceIn(0.0, 1.0)
 
     private fun buildHealthSummary(
         safeToSpend: Double,

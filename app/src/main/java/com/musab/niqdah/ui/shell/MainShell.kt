@@ -115,6 +115,7 @@ fun MainShell(
                 onDeleteIncomeTransaction = financeViewModel::deleteIncomeTransaction,
                 onPreviewBankMessage = financeViewModel::previewBankMessage,
                 onSaveImportedBankMessage = financeViewModel::saveImportedBankMessage,
+                onRecordManualDeposit = financeViewModel::recordManualDeposit,
                 onSavePendingBankImport = financeViewModel::savePendingBankImport,
                 onUpdatePendingBankImport = financeViewModel::updatePendingBankImport,
                 onDismissPendingBankImport = financeViewModel::dismissPendingBankImport,

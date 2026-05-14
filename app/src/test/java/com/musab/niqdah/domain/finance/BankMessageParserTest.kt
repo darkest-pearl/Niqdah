@@ -275,6 +275,86 @@ class BankMessageParserTest {
     }
 
     @Test
+    fun depositedToDailyUseAccountBecomesGeneralDepositWithUnconfirmedBalance() {
+        val parsed = parser.parse(
+            rawMessage = "AED 3500.00 has been deposited to your account no. XXXXXXXX4052. Login to Mobile or Online Banking for details.",
+            manualSenderName = "BANKTEST",
+            settings = FinanceDefaults.bankMessageParserSettings().copy(
+                dailyUseSource = BankMessageSourceSettings(senderName = "BANKTEST", isEnabled = true),
+                dailyUseAccountSuffix = "4052",
+                savingsAccountSuffix = "4146"
+            ),
+            categories = categories,
+            nowMillis = 1_800_000_000_000L
+        )
+
+        assertEquals(ParsedBankMessageType.INCOME, parsed.type)
+        assertEquals(BankMessageSourceType.DAILY_USE, parsed.sourceType)
+        assertEquals(3_500.0, parsed.amount ?: 0.0, 0.001)
+        assertEquals(350_000L, parsed.amountMinor)
+        assertEquals("4052", parsed.targetAccountSuffix)
+        assertNull(parsed.availableBalance)
+        assertNull(parsed.availableBalanceMinor)
+        assertEquals(DepositType.OTHER_INCOME, parsed.depositType)
+        assertEquals(ParsedBankMessageConfidence.HIGH, parsed.confidence)
+    }
+
+    @Test
+    fun salaryKeywordDepositIsSalaryDeposit() {
+        val parsed = parser.parse(
+            rawMessage = "Monthly salary AED 3500.00 has been deposited to your account no. XXXXXXXX4052.",
+            manualSenderName = "BANKTEST",
+            settings = FinanceDefaults.bankMessageParserSettings().copy(
+                dailyUseAccountSuffix = "4052"
+            ),
+            categories = categories,
+            nowMillis = 1_800_000_000_000L
+        )
+
+        assertEquals(ParsedBankMessageType.INCOME, parsed.type)
+        assertEquals(DepositType.SALARY, parsed.depositType)
+        assertEquals(350_000L, parsed.amountMinor)
+    }
+
+    @Test
+    fun refundCreditIsRefundNotSalary() {
+        val parsed = parser.parse(
+            rawMessage = "Refund credited AED 12.25 to your account no. XXXXXXXX4052.",
+            manualSenderName = "BANKTEST",
+            settings = FinanceDefaults.bankMessageParserSettings().copy(
+                dailyUseAccountSuffix = "4052"
+            ),
+            categories = categories,
+            nowMillis = 1_800_000_000_000L
+        )
+
+        assertEquals(ParsedBankMessageType.INCOME, parsed.type)
+        assertEquals(DepositType.REFUND, parsed.depositType)
+        assertEquals(1_225L, parsed.amountMinor)
+    }
+
+    @Test
+    fun accountToAccountCreditToSavingsHasTransferDepositTypeAndNoConfirmedBalance() {
+        val parsed = parser.parse(
+            rawMessage = "Your Ac No. XXXXXXXX4146 is credited with AED 1000.00 as Account to Account Transfer. Login to Online Banking for details.",
+            manualSenderName = "BANKTEST",
+            settings = FinanceDefaults.bankMessageParserSettings().copy(
+                dailyUseAccountSuffix = "4052",
+                savingsAccountSuffix = "4146"
+            ),
+            categories = categories,
+            nowMillis = 1_800_000_000_000L
+        )
+
+        assertEquals(ParsedBankMessageType.SAVINGS_TRANSFER, parsed.type)
+        assertEquals(BankMessageSourceType.SAVINGS, parsed.sourceType)
+        assertEquals(DepositType.TRANSFER, parsed.depositType)
+        assertEquals(100_000L, parsed.amountMinor)
+        assertNull(parsed.availableBalance)
+        assertNull(parsed.availableBalanceMinor)
+    }
+
+    @Test
     fun informationalBankMessagesDoNotBecomeExpenseDrafts() {
         val samples = listOf(
             "The OTP is 123456 for EUR 0.93 txn at Oracle Ireland on your card 8251. Do not share OTP with anyone.",

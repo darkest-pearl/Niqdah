@@ -67,3 +67,22 @@ Included:
 - Unit tests for onboarding required behavior, onboarding plan writes, debt branching, monthly target calculation, neutral defaults, existing data preservation, and SMS privacy defaults.
 
 Privacy constraints remain unchanged: no `READ_SMS`, no SMS content sent to OpenAI/backend, no backend SMS access, no OpenAI API key in the Android app, and no automatic save of raw SMS without review.
+
+## Phase 7B.1 Money Precision, Deposit Tracking, And Settings Hierarchy
+
+Move Niqdah from approximate/whole-number finance handling toward exact premium account tracking. Complete for the first implementation pass.
+
+Included:
+
+- Money helpers parse and format currency as Long minor units, with legacy Firestore Double compatibility.
+- UI money displays two decimals and grouped values such as `AED 1,499.23`.
+- Dashboard, discipline, safe-to-spend, category, income, savings, and debt calculations use minor units internally.
+- Bank parser detects salary deposits, general deposits, refunds, and savings account-to-account credits.
+- Generic deposits are no longer misclassified as expenses because short debit keywords such as `pos` must match word boundaries.
+- Manual **Record salary/deposit** flow supports salary, other income, refund, transfer, daily-use account, savings account, optional current balance, and date.
+- Account ledger entries track confirmed SMS balances, manual confirmed balances, estimated deposits/debits, transfers, and needs-review events.
+- Dashboard and Settings show daily-use and savings balances with Confirmed, Estimated, or Needs review confidence.
+- AI finance context includes monthly deposits/salary, balance confidence, account ledger summary, primary goal progress, and debt status without raw SMS content.
+- Settings/Profile is organized into menu cards and focused detail pages.
+
+Privacy constraints remain unchanged: no `READ_SMS`, automatic SMS import keeps `rawMessage = ""`, no SMS content is sent to OpenAI/backend, no backend SMS access, and no OpenAI API key in the Android app.

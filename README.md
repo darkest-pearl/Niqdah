@@ -2,7 +2,7 @@
 
 Niqdah is a personal Android finance app for disciplined budgeting, debt pressure, savings goals, and everyday spending control, built with Kotlin, Jetpack Compose, Material 3, Firebase Auth, Firestore, and Firebase Cloud Functions.
 
-Phase 7A adds a personalized first-run onboarding flow, neutral finance defaults, a more premium visual system, a splash experience, and an upgraded adaptive icon placeholder. Existing manual expenses, AI Chat, SMS import, internal transfer pairing, balance tracking, reminders, and release prep remain intact.
+Phase 7B.1 adds exact two-decimal money handling with minor units, salary/deposit tracking, account balance ledger confidence, and a cleaner hierarchical Settings/Profile structure. Existing manual expenses, AI Chat, SMS import, internal transfer pairing, balance tracking, reminders, onboarding, and release prep remain intact.
 
 ## Tech Stack
 
@@ -108,6 +108,7 @@ users/{uid}/incomeTransactions/{transactionId}
 users/{uid}/pendingBankImports/{importHash}
 users/{uid}/bankMessageImportHistory/{importHash}
 users/{uid}/accountBalanceSnapshots/{accountKind-importHash}
+users/{uid}/accountLedgerEntries/{ledgerEntryId}
 users/{uid}/savingsGoals/{goalId}
 users/{uid}/necessaryItems/{necessaryItemId}
 users/{uid}/monthlySnapshots/{yearMonth}
@@ -188,6 +189,18 @@ The onboarding output becomes the user's Firestore plan. The dashboard then uses
 
 The visual system now includes shared premium Compose primitives such as `AppScaffold`, `PageHeader`, `PremiumCard`, `MetricCard`, `InsightCard`, `ActionCard`, `SectionHeader`, `EmptyState`, `StatusPill`, `WarningBanner`, `SuccessBanner`, and `ProgressRing`. The app also has a splash theme and an adaptive vector icon placeholder based on a coin-and-shield mark.
 
+## Phase 7B.1 Money Precision, Deposits, And Balance Ledger
+
+Phase 7B.1 moves currency calculations to exact minor units while keeping old Firestore `Double` fields readable. New `...Minor` fields store amounts such as AED 17.25 as `1725`, while legacy fields are still written for backward compatibility. UI money now formats with two decimals, for example `AED 10.00`, `AED 17.25`, and `AED 1,499.23`.
+
+Salary and deposit messages are parsed as income/deposit events instead of expenses. Salary-like keywords map to salary deposits, refund wording maps to refund deposits, and account-to-account credits to savings remain savings transfers. Deposits without available balance create estimated or needs-review ledger entries rather than pretending the balance is confirmed.
+
+Account tracking now includes `AccountLedgerEntry` events for confirmed SMS balances, manual balance confirmations, estimated deposits/debits, transfer in/out, and adjustments. Dashboard and Settings show daily-use and savings balances with confidence labels: Confirmed, Estimated, or Needs review.
+
+Transactions includes **Record salary/deposit** for manual salary, other income, refund, transfer, or savings deposit entry. If a current balance is entered, the account balance is confirmed manually; if only the deposit amount is entered, Niqdah records the deposit and keeps the balance estimated/unconfirmed.
+
+Settings is now menu-based: Profile & Setup, Accounts & Bank SMS, Categories & Budgets, Reminders & Discipline, Privacy & Security, and App & Release each open focused detail pages instead of one giant flat form.
+
 ## Phase 6 Polish, Security, And Release Prep
 
 Phase 6 adds a first-run setup checklist in Settings, a short in-app Privacy note, friendlier save feedback, central notification channel definitions, Firestore security rules, and personal APK preparation docs.
@@ -263,15 +276,18 @@ Included:
 - Manual bank message import with parser preview and editable fields
 - Experimental incoming SMS bank import with pending review drafts
 - Account balance snapshots for daily-use and savings bank messages
+- Account balance ledger entries with confirmed/estimated/needs-review confidence
+- Manual salary/deposit recording with optional confirmed balance-after amount
 - Save, Edit, and Dismiss notification actions for pending bank import drafts
 - Monthly savings reminders, missed savings reminders, overspending warnings, avoid warnings, necessary item reminders, and goal countdown
 - Daily-use and savings bank message source settings
 - Rule-based category suggestions for pasted bank messages
 - Imported income records from credit messages
+- Salary/deposit parsing for deposited, credited, payroll, salary, refund, and account-to-account credit messages
 - Personalized primary savings goal and optional envelopes
 - Debt tracker and debt payment updates
 - Dashboard calculations for income, spending, safe-to-spend, savings, debt, overspending alerts, discipline status, goal countdown, and health summary
-- Dashboard and Settings latest balance status fields
+- Dashboard and Settings latest balance status fields with confidence labels
 - Firestore persistence under `users/{uid}`
 - AI Chat with in-session history
 - Secure Cloud Function backend for OpenAI Responses API

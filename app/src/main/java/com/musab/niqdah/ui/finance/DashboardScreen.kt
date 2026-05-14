@@ -21,9 +21,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.musab.niqdah.domain.finance.AccountBalanceConfidence
+import com.musab.niqdah.domain.finance.AccountBalanceStatus
 import com.musab.niqdah.domain.finance.CategoryBudgetWarning
+import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.DisciplineStatus
+import com.musab.niqdah.domain.finance.FinanceDates
 import com.musab.niqdah.domain.finance.NecessaryItemDue
+import java.time.LocalDate
 
 @Composable
 fun DashboardScreen(
@@ -75,10 +80,18 @@ fun DashboardScreen(
                     subtitle = "After spending, fixed reserves, savings target, and debt reduction."
                 )
             }
+            if (uiState.shouldShowSalaryReminder()) {
+                item {
+                    InsightCard(
+                        title = "Salary not recorded yet",
+                        body = "Salary has not been recorded yet. Record it manually or wait for bank SMS."
+                    )
+                }
+            }
             item {
                 SectionHeader(
                     title = "Account balances",
-                    subtitle = "Updated only from reviewed bank SMS summaries."
+                    subtitle = "Confirmed when SMS or manual balance includes the actual account balance."
                 )
             }
             item {
@@ -172,32 +185,57 @@ private fun PlanSummaryCard(uiState: FinanceUiState) {
 @Composable
 private fun AccountBalancesCard(uiState: FinanceUiState) {
     PremiumCard {
-        DisciplineLine(
-            label = "Daily-use",
-            value = uiState.data.latestDailyUseBalance?.let {
-                formatMoney(it.availableBalance, it.currency)
-            } ?: "Not known yet"
+        BalanceStatusRow(label = "Daily-use", status = uiState.data.latestDailyUseBalanceStatus)
+        BalanceStatusRow(label = "Savings", status = uiState.data.latestSavingsBalanceStatus)
+    }
+}
+
+private fun FinanceUiState.shouldShowSalaryReminder(): Boolean {
+    if (data.profile.salary <= 0.0 && data.profile.salaryMinor <= 0L) return false
+    val salaryDay = data.profile.salaryDayOfMonth.coerceIn(1, 31)
+    val today = LocalDate.now()
+    if (today.dayOfMonth < salaryDay) return false
+    val currentMonth = FinanceDates.currentYearMonth()
+    return data.incomeTransactions.none {
+        it.yearMonth == currentMonth && it.depositType == DepositType.SALARY
+    }
+}
+
+@Composable
+private fun BalanceStatusRow(label: String, status: AccountBalanceStatus?) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(text = label, style = MaterialTheme.typography.titleMedium)
+            status?.let {
+                StatusPill(
+                    text = it.confidence.label,
+                    isWarning = it.confidence != AccountBalanceConfidence.CONFIRMED
+                )
+            }
+        }
+        Text(
+            text = status?.let { formatMoneyMinor(it.amountMinor, it.currency) } ?: "Not known yet",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold
         )
         Text(
-            text = uiState.data.latestDailyUseBalance?.let {
-                "Last update ${formatTransactionDateTime(it.messageTimestampMillis)} from ${it.sender.ifBlank { "bank SMS" }}."
-            } ?: "Niqdah shows this after a reviewed bank SMS includes an available balance.",
+            text = status?.let {
+                "Last update ${formatTransactionDateTime(it.lastUpdatedMillis)} from ${it.source.label}. ${it.note}"
+            } ?: "Niqdah shows this after a bank SMS or manual balance confirmation.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium
         )
-        DisciplineLine(
-            label = "Savings",
-            value = uiState.data.latestSavingsBalance?.let {
-                formatMoney(it.availableBalance, it.currency)
-            } ?: "Not known yet"
-        )
-        Text(
-            text = uiState.data.latestSavingsBalance?.let {
-                "Last update ${formatTransactionDateTime(it.messageTimestampMillis)} from ${it.sender.ifBlank { "bank SMS" }}."
-            } ?: "Savings balance appears after a savings bank message includes an available balance.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodyMedium
-        )
+        if (status?.confidence == AccountBalanceConfidence.ESTIMATED) {
+            Text(
+                text = "Estimated balance. Confirm with next bank SMS or manual update.",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
     }
 }
 

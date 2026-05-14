@@ -10,7 +10,10 @@ data class UserProfile(
     val onboardingCompleted: Boolean = false,
     val primaryGoalId: String = "",
     val createdAtMillis: Long = 0L,
-    val updatedAtMillis: Long = 0L
+    val updatedAtMillis: Long = 0L,
+    val salaryMinor: Long = 0L,
+    val extraIncomeMinor: Long = 0L,
+    val monthlySavingsTargetMinor: Long = 0L
 )
 
 data class BudgetCategory(
@@ -19,7 +22,8 @@ data class BudgetCategory(
     val monthlyBudget: Double,
     val type: CategoryType,
     val createdAtMillis: Long = 0L,
-    val updatedAtMillis: Long = 0L
+    val updatedAtMillis: Long = 0L,
+    val monthlyBudgetMinor: Long = 0L
 )
 
 enum class CategoryType(val label: String) {
@@ -39,7 +43,8 @@ data class ExpenseTransaction(
     val occurredAtMillis: Long,
     val yearMonth: String,
     val createdAtMillis: Long = 0L,
-    val updatedAtMillis: Long = 0L
+    val updatedAtMillis: Long = 0L,
+    val amountMinor: Long = 0L
 )
 
 enum class NecessityLevel(val label: String) {
@@ -57,7 +62,9 @@ data class IncomeTransaction(
     val occurredAtMillis: Long,
     val yearMonth: String,
     val createdAtMillis: Long = 0L,
-    val updatedAtMillis: Long = 0L
+    val updatedAtMillis: Long = 0L,
+    val amountMinor: Long = 0L,
+    val depositType: DepositType = DepositType.OTHER_INCOME
 )
 
 data class SavingsGoal(
@@ -69,7 +76,9 @@ data class SavingsGoal(
     val purpose: GoalPurpose = GoalPurpose.CUSTOM,
     val isPrimary: Boolean = false,
     val createdAtMillis: Long = 0L,
-    val updatedAtMillis: Long = 0L
+    val updatedAtMillis: Long = 0L,
+    val targetAmountMinor: Long = 0L,
+    val savedAmountMinor: Long = 0L
 )
 
 data class DebtTracker(
@@ -79,7 +88,10 @@ data class DebtTracker(
     val lenderType: DebtLenderType = DebtLenderType.OTHER,
     val pressureLevel: DebtPressureLevel = DebtPressureLevel.FLEXIBLE,
     val dueDayOfMonth: Int? = null,
-    val updatedAtMillis: Long = 0L
+    val updatedAtMillis: Long = 0L,
+    val startingAmountMinor: Long = 0L,
+    val remainingAmountMinor: Long = 0L,
+    val monthlyAutoReductionMinor: Long = 0L
 )
 
 data class MonthlySnapshot(
@@ -103,6 +115,7 @@ data class FinanceData(
     val incomeTransactions: List<IncomeTransaction>,
     val pendingBankImports: List<PendingBankImport>,
     val accountBalanceSnapshots: List<AccountBalanceSnapshot>,
+    val accountLedgerEntries: List<AccountLedgerEntry> = emptyList(),
     val internalTransferRecords: List<InternalTransferRecord>,
     val merchantRules: List<MerchantRule>,
     val goals: List<SavingsGoal>,
@@ -124,8 +137,17 @@ data class FinanceData(
     val latestSavingsBalance: AccountBalanceSnapshot?
         get() = latestBalance(AccountKind.SAVINGS)
 
+    val latestDailyUseBalanceStatus: AccountBalanceStatus?
+        get() = latestBalanceStatus(AccountKind.DAILY_USE)
+
+    val latestSavingsBalanceStatus: AccountBalanceStatus?
+        get() = latestBalanceStatus(AccountKind.SAVINGS)
+
     val lastBalanceUpdateMillis: Long
-        get() = accountBalanceSnapshots.maxOfOrNull { it.createdAtMillis } ?: 0L
+        get() = maxOf(
+            accountBalanceSnapshots.maxOfOrNull { it.createdAtMillis } ?: 0L,
+            accountLedgerEntries.maxOfOrNull { it.createdAtMillis } ?: 0L
+        )
 
     private fun latestBalance(accountKind: AccountKind): AccountBalanceSnapshot? =
         accountBalanceSnapshots
@@ -145,6 +167,7 @@ data class FinanceData(
                 incomeTransactions = emptyList(),
                 pendingBankImports = emptyList(),
                 accountBalanceSnapshots = emptyList(),
+                accountLedgerEntries = emptyList(),
                 internalTransferRecords = emptyList(),
                 merchantRules = emptyList(),
                 goals = emptyList(),
@@ -153,6 +176,38 @@ data class FinanceData(
                 reminderSettings = FinanceDefaults.reminderSettings(),
                 necessaryItems = emptyList()
             )
+    }
+
+    private fun latestBalanceStatus(accountKind: AccountKind): AccountBalanceStatus? {
+        val ledgerStatus = accountLedgerEntries
+            .filter { it.accountKind == accountKind && it.balanceAfterMinor != null }
+            .maxByOrNull { it.createdAtMillis }
+            ?.let { entry ->
+                AccountBalanceStatus(
+                    accountKind = entry.accountKind,
+                    accountSuffix = entry.accountSuffix,
+                    amountMinor = entry.balanceAfterMinor ?: 0L,
+                    currency = entry.currency,
+                    confidence = entry.confidence,
+                    lastUpdatedMillis = entry.createdAtMillis,
+                    source = entry.source,
+                    note = entry.note
+                )
+            }
+        if (ledgerStatus != null) return ledgerStatus
+
+        return latestBalance(accountKind)?.let { snapshot ->
+            AccountBalanceStatus(
+                accountKind = snapshot.accountKind,
+                accountSuffix = "",
+                amountMinor = effectiveMinorUnits(snapshot.availableBalanceMinor, snapshot.availableBalance),
+                currency = snapshot.currency,
+                confidence = AccountBalanceConfidence.CONFIRMED,
+                lastUpdatedMillis = snapshot.createdAtMillis,
+                source = AccountLedgerSource.SMS,
+                note = "Balance confirmed by bank SMS."
+            )
+        }
     }
 }
 
@@ -170,7 +225,9 @@ data class ReminderSettings(
     val isAvoidCategoryWarningEnabled: Boolean = true,
     val januaryTargetDate: String = "",
     val januaryFundTargetAmount: Double = 0.0,
-    val updatedAtMillis: Long = 0L
+    val updatedAtMillis: Long = 0L,
+    val monthlySavingsTargetAmountMinor: Long = 0L,
+    val januaryFundTargetAmountMinor: Long = 0L
 )
 
 data class NecessaryItem(
@@ -183,7 +240,8 @@ data class NecessaryItem(
     val status: NecessaryItemStatus = NecessaryItemStatus.PENDING,
     val isNotificationEnabled: Boolean = true,
     val createdAtMillis: Long = 0L,
-    val updatedAtMillis: Long = 0L
+    val updatedAtMillis: Long = 0L,
+    val amountMinor: Long? = null
 )
 
 enum class NecessaryItemRecurrence(val label: String) {
@@ -209,8 +267,58 @@ data class AccountBalanceSnapshot(
     val currency: String,
     val messageTimestampMillis: Long,
     val sourceMessageHash: String,
-    val createdAtMillis: Long
+    val createdAtMillis: Long,
+    val availableBalanceMinor: Long = 0L
 )
+
+data class AccountLedgerEntry(
+    val id: String,
+    val accountKind: AccountKind,
+    val accountSuffix: String = "",
+    val eventType: AccountLedgerEventType,
+    val amountMinor: Long,
+    val balanceAfterMinor: Long? = null,
+    val currency: String = FinanceDefaults.DEFAULT_CURRENCY,
+    val confidence: AccountBalanceConfidence,
+    val source: AccountLedgerSource,
+    val relatedTransactionId: String? = null,
+    val createdAtMillis: Long = 0L,
+    val note: String = ""
+)
+
+data class AccountBalanceStatus(
+    val accountKind: AccountKind,
+    val accountSuffix: String = "",
+    val amountMinor: Long,
+    val currency: String = FinanceDefaults.DEFAULT_CURRENCY,
+    val confidence: AccountBalanceConfidence,
+    val lastUpdatedMillis: Long = 0L,
+    val source: AccountLedgerSource = AccountLedgerSource.SYSTEM,
+    val note: String = ""
+)
+
+enum class AccountLedgerEventType(val label: String) {
+    BALANCE_CONFIRMED_SMS("Balance confirmed by SMS"),
+    BALANCE_CONFIRMED_MANUAL("Balance confirmed manually"),
+    ESTIMATED_DEPOSIT("Estimated deposit"),
+    ESTIMATED_DEBIT("Estimated debit"),
+    TRANSFER_OUT("Transfer out"),
+    TRANSFER_IN("Transfer in"),
+    ADJUSTMENT("Adjustment")
+}
+
+enum class AccountBalanceConfidence(val label: String) {
+    CONFIRMED("Confirmed"),
+    ESTIMATED("Estimated"),
+    NEEDS_REVIEW("Needs review")
+}
+
+enum class AccountLedgerSource(val label: String) {
+    SMS("SMS"),
+    MANUAL("Manual"),
+    IMPORT("Import"),
+    SYSTEM("System")
+}
 
 data class MerchantRule(
     val normalizedMerchantName: String,
@@ -235,7 +343,8 @@ data class InternalTransferRecord(
     val createdAtMillis: Long,
     val messageTimestampMillis: Long,
     val note: String,
-    val sourceMessageHash: String
+    val sourceMessageHash: String,
+    val amountMinor: Long = 0L
 )
 
 enum class InternalTransferDirection(val label: String) {
@@ -295,6 +404,13 @@ enum class ParsedBankMessageConfidence(val label: String) {
     LOW("Low")
 }
 
+enum class DepositType(val label: String) {
+    SALARY("Salary"),
+    OTHER_INCOME("Other income"),
+    REFUND("Refund"),
+    TRANSFER("Transfer")
+}
+
 data class ParsedBankMessage(
     val rawMessage: String,
     val senderName: String = "",
@@ -319,7 +435,12 @@ data class ParsedBankMessage(
     val suggestedCategoryId: String? = null,
     val suggestedCategoryName: String = "Uncategorized",
     val suggestedNecessity: NecessityLevel = NecessityLevel.OPTIONAL,
-    val confidence: ParsedBankMessageConfidence = ParsedBankMessageConfidence.LOW
+    val confidence: ParsedBankMessageConfidence = ParsedBankMessageConfidence.LOW,
+    val amountMinor: Long? = null,
+    val availableBalanceMinor: Long? = null,
+    val originalForeignAmountMinor: Long? = null,
+    val inferredAccountDebitMinor: Long? = null,
+    val depositType: DepositType = DepositType.OTHER_INCOME
 )
 
 data class PendingBankImport(
@@ -351,7 +472,12 @@ data class PendingBankImport(
     val confidence: ParsedBankMessageConfidence,
     val receivedAtMillis: Long,
     val createdAtMillis: Long = 0L,
-    val updatedAtMillis: Long = 0L
+    val updatedAtMillis: Long = 0L,
+    val amountMinor: Long? = null,
+    val availableBalanceMinor: Long? = null,
+    val originalForeignAmountMinor: Long? = null,
+    val inferredAccountDebitMinor: Long? = null,
+    val depositType: DepositType = DepositType.OTHER_INCOME
 )
 
 data class BankMessageImportHistory(

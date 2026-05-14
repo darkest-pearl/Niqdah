@@ -59,7 +59,12 @@ class BankMessageParser {
             confidence = parsed.confidence,
             receivedAtMillis = receivedAtMillis,
             createdAtMillis = nowMillis,
-            updatedAtMillis = nowMillis
+            updatedAtMillis = nowMillis,
+            amountMinor = parsed.amountMinor,
+            availableBalanceMinor = parsed.availableBalanceMinor,
+            originalForeignAmountMinor = parsed.originalForeignAmountMinor,
+            inferredAccountDebitMinor = parsed.inferredAccountDebitMinor,
+            depositType = parsed.depositType
         )
     }
 
@@ -112,6 +117,7 @@ class BankMessageParser {
         val hasSavingsTransfer = compactMessage.containsAny(savingsKeywords)
         val hasDebit = compactMessage.containsAny(debitKeywords)
         val hasCredit = compactMessage.containsAny(creditKeywords)
+        val depositType = depositTypeFor(compactMessage, isAccountToAccountTransfer)
         val parsedType = when {
             informationalReason.isNotBlank() -> ParsedBankMessageType.INFORMATIONAL
             isAccountToAccountTransfer &&
@@ -148,6 +154,7 @@ class BankMessageParser {
             foreignTransactionAmount = foreignTransactionAmount
         )
         val amount = inference?.amount ?: transactionAmount?.amount
+        val amountMinor = inference?.amountMinor ?: transactionAmount?.amountMinor
         val currency = inference?.currency
             ?: transactionAmount?.currency
             ?: moneyMentions.firstOrNull()?.currency
@@ -155,6 +162,7 @@ class BankMessageParser {
         val hasExplicitCurrency = transactionAmount?.hasExplicitCurrency == true ||
             moneyMentions.any { !it.isBalanceLike && it.hasExplicitCurrency }
         val availableBalance = balanceMention?.amount
+        val availableBalanceMinor = balanceMention?.amountMinor
         val occurredAt = parseDateMillis(rawMessage, nowMillis) ?: nowMillis
         val merchantName = extractMerchant(
             rawMessage = rawMessage,
@@ -237,8 +245,14 @@ class BankMessageParser {
                 hasSavingsTransfer = hasSavingsTransfer,
                 isAccountToAccountTransfer = isAccountToAccountTransfer,
                 accountSuffixMatched = settings.savingsAccountSuffix.matchesSuffix(resolvedTargetSuffix) ||
-                    settings.dailyUseAccountSuffix.matchesSuffix(resolvedSourceSuffix)
-            )
+                    settings.dailyUseAccountSuffix.matchesSuffix(resolvedSourceSuffix) ||
+                    settings.dailyUseAccountSuffix.matchesSuffix(resolvedTargetSuffix)
+            ),
+            amountMinor = amountMinor,
+            availableBalanceMinor = availableBalanceMinor,
+            originalForeignAmountMinor = foreignTransactionAmount?.amountMinor,
+            inferredAccountDebitMinor = inference?.amountMinor,
+            depositType = depositType
         )
     }
 
@@ -256,6 +270,7 @@ class BankMessageParser {
 
         return when {
             settings.savingsAccountSuffix.matchesSuffix(targetAccountSuffix) -> BankMessageSourceType.SAVINGS
+            settings.dailyUseAccountSuffix.matchesSuffix(targetAccountSuffix) -> BankMessageSourceType.DAILY_USE
             settings.dailyUseAccountSuffix.matchesSuffix(sourceAccountSuffix) -> BankMessageSourceType.DAILY_USE
             settings.savingsSource.isEnabled &&
                 compactMessage.containsAny(savingsKeywords) -> BankMessageSourceType.SAVINGS
@@ -300,12 +315,13 @@ class BankMessageParser {
                 val second = match.groupValues[2]
                 val amountText = if (first.firstOrNull()?.isDigit() == true) first else second
                 val currencyText = if (first.firstOrNull()?.isDigit() == true) second else first
-                val amount = amountText.replace(",", "").toDoubleOrNull()
-                if (amount != null) {
+                val currency = normalizeCurrency(currencyText)
+                val amountMinor = parseMoneyToMinorUnitsOrNull(amountText, currency)
+                if (amountMinor != null) {
                     mentions += moneyMention(
                         rawMessage = rawMessage,
-                        amount = amount,
-                        currency = normalizeCurrency(currencyText),
+                        amountMinor = amountMinor,
+                        currency = currency,
                         hasExplicitCurrency = true,
                         start = match.range.first,
                         end = match.range.last
@@ -320,10 +336,11 @@ class BankMessageParser {
         ).findAll(rawMessage).forEach { match ->
             val range = match.groups[1]?.range ?: return@forEach
             if (mentions.any { range.first in it.start..it.end }) return@forEach
-            val amount = match.groupValues[1].replace(",", "").toDoubleOrNull() ?: return@forEach
+            val amountMinor = parseMoneyToMinorUnitsOrNull(match.groupValues[1], FinanceDefaults.DEFAULT_CURRENCY)
+                ?: return@forEach
             mentions += moneyMention(
                 rawMessage = rawMessage,
-                amount = amount,
+                amountMinor = amountMinor,
                 currency = FinanceDefaults.DEFAULT_CURRENCY,
                 hasExplicitCurrency = false,
                 start = range.first,
@@ -336,7 +353,7 @@ class BankMessageParser {
 
     private fun moneyMention(
         rawMessage: String,
-        amount: Double,
+        amountMinor: Long,
         currency: String,
         hasExplicitCurrency: Boolean,
         start: Int,
@@ -348,7 +365,8 @@ class BankMessageParser {
         val prefix = rawMessage.substring(prefixStart until start).compact()
         val context = rawMessage.substring(contextStart..contextEnd).compact()
         return MoneyMention(
-            amount = amount,
+            amount = minorUnitsToMajor(amountMinor),
+            amountMinor = amountMinor,
             currency = currency,
             hasExplicitCurrency = hasExplicitCurrency,
             start = start,
@@ -403,11 +421,13 @@ class BankMessageParser {
                     .thenBy { it.createdAtMillis }
             )
             ?: return null
-        val inferredDebit = previousBalance.availableBalance - currentBalance.amount
-        if (!inferredDebit.isReasonableInferredDebit(previousBalance.availableBalance)) return null
+        val previousBalanceMinor = effectiveMinorUnits(previousBalance.availableBalanceMinor, previousBalance.availableBalance)
+        val inferredDebitMinor = previousBalanceMinor - currentBalance.amountMinor
+        if (!inferredDebitMinor.isReasonableInferredDebit(previousBalanceMinor)) return null
 
         return BalanceDebitInference(
-            amount = inferredDebit,
+            amount = minorUnitsToMajor(inferredDebitMinor),
+            amountMinor = inferredDebitMinor,
             currency = currentBalance.currency,
             confidence = ParsedBankMessageConfidence.MEDIUM,
             note = INFERRED_BALANCE_NOTE
@@ -712,7 +732,14 @@ class BankMessageParser {
 
     private fun String.containsAny(keywords: List<String>): Boolean {
         val text = lowercase(Locale.US)
-        return keywords.any { keyword -> keyword.trim().isNotBlank() && text.contains(keyword.trim().lowercase(Locale.US)) }
+        return keywords.any { keyword ->
+            val normalized = keyword.trim().lowercase(Locale.US)
+            normalized.isNotBlank() && if (normalized.length <= 3 && normalized.all { it.isLetterOrDigit() }) {
+                Regex("""\b${Regex.escape(normalized)}\b""").containsMatchIn(text)
+            } else {
+                text.contains(normalized)
+            }
+        }
     }
 
     private fun informationalReason(compactMessage: String): String =
@@ -752,10 +779,11 @@ class BankMessageParser {
             .orEmpty()
 
     private fun extractTargetAccountSuffix(rawMessage: String): String =
-        Regex("""(?i)\b(?:your\s+)?(?:ac|account)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\s+is\s+credited\b""")
+        Regex("""(?i)(?:\b(?:your\s+)?(?:ac|account)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\s+is\s+credited\b|\b(?:deposited|credited)\s+to\s+your\s+(?:ac|account)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\b|\bto\s+your\s+(?:ac|account)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\b)""")
             .find(rawMessage)
             ?.groupValues
-            ?.getOrNull(1)
+            ?.drop(1)
+            ?.firstOrNull { it.isNotBlank() }
             .orEmpty()
 
     private fun extractCardSuffix(rawMessage: String): String =
@@ -800,10 +828,11 @@ class BankMessageParser {
                 compareBy<AccountBalanceSnapshot> { it.messageTimestampMillis }
                     .thenBy { it.createdAtMillis }
             )
-            ?.availableBalance
+            ?.let { effectiveMinorUnits(it.availableBalanceMinor, it.availableBalance) }
             ?: return ""
-        val delta = availableBalance - previousSavingsBalance
-        return if (kotlin.math.abs(delta - amount) > 1.0) {
+        val deltaMinor = majorToMinorUnits(availableBalance)
+        val amountMinor = majorToMinorUnits(amount)
+        return if (kotlin.math.abs((deltaMinor - previousSavingsBalance) - amountMinor) > 100L) {
             "Savings balance is outdated or lower than this transfer. Please review/update balance."
         } else {
             ""
@@ -856,8 +885,8 @@ class BankMessageParser {
     private fun Double.cleanAmountText(): String =
         if (this % 1.0 == 0.0) toLong().toString() else toString()
 
-    private fun Double.isReasonableInferredDebit(previousBalance: Double): Boolean =
-        this > 0.0 && this <= previousBalance && this <= MAX_REASONABLE_INFERRED_DEBIT
+    private fun Long.isReasonableInferredDebit(previousBalanceMinor: Long): Boolean =
+        this > 0L && this <= previousBalanceMinor && this <= MAX_REASONABLE_INFERRED_DEBIT_MINOR
 
     private fun BankMessageSourceType.toAccountKind(): AccountKind? =
         when (this) {
@@ -866,8 +895,20 @@ class BankMessageParser {
             BankMessageSourceType.UNKNOWN -> null
         }
 
+    private fun depositTypeFor(compactMessage: String, isAccountToAccountTransfer: Boolean): DepositType =
+        when {
+            isAccountToAccountTransfer -> DepositType.TRANSFER
+            compactMessage.containsAny(listOf("refund", "reversal", "chargeback", "reversed")) -> DepositType.REFUND
+            compactMessage.containsAny(listOf("monthly salary", "salary", "payroll", "wages", "employer")) ->
+                DepositType.SALARY
+            compactMessage.containsAny(listOf("deposited", "credited", "cash deposit", "transfer received")) ->
+                DepositType.OTHER_INCOME
+            else -> DepositType.OTHER_INCOME
+        }
+
     private data class MoneyMention(
         val amount: Double,
+        val amountMinor: Long,
         val currency: String,
         val hasExplicitCurrency: Boolean,
         val start: Int,
@@ -890,6 +931,7 @@ class BankMessageParser {
 
     private data class BalanceDebitInference(
         val amount: Double,
+        val amountMinor: Long,
         val currency: String,
         val confidence: ParsedBankMessageConfidence,
         val note: String
@@ -897,7 +939,7 @@ class BankMessageParser {
 
     private companion object {
         const val INFERRED_BALANCE_NOTE = "AED debit inferred from balance change; review before saving."
-        const val MAX_REASONABLE_INFERRED_DEBIT = 10_000.0
+        const val MAX_REASONABLE_INFERRED_DEBIT_MINOR = 1_000_000L
 
         val STRONG_SAVINGS_TRANSFER_KEYWORDS = listOf(
             "transferred to savings",
