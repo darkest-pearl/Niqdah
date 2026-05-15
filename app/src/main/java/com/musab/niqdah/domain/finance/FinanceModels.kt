@@ -411,6 +411,13 @@ enum class DepositType(val label: String) {
     TRANSFER("Transfer")
 }
 
+enum class ExternalTransferClassification(val label: String) {
+    TRANSFER_TO_MY_SAVINGS("Transfer to my savings"),
+    TRANSFER_TO_ANOTHER_PERSON("Transfer to another person"),
+    BILL_PAYMENT("Bill/payment"),
+    OTHER("Other")
+}
+
 data class ParsedBankMessage(
     val rawMessage: String,
     val senderName: String = "",
@@ -477,7 +484,8 @@ data class PendingBankImport(
     val availableBalanceMinor: Long? = null,
     val originalForeignAmountMinor: Long? = null,
     val inferredAccountDebitMinor: Long? = null,
-    val depositType: DepositType = DepositType.OTHER_INCOME
+    val depositType: DepositType = DepositType.OTHER_INCOME,
+    val externalTransferClassification: ExternalTransferClassification? = null
 )
 
 data class BankMessageImportHistory(

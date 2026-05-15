@@ -86,3 +86,20 @@ Included:
 - Settings/Profile is organized into menu cards and focused detail pages.
 
 Privacy constraints remain unchanged: no `READ_SMS`, automatic SMS import keeps `rawMessage = ""`, no SMS content is sent to OpenAI/backend, no backend SMS access, and no OpenAI API key in the Android app.
+
+## Phase 7B.2 Finance Intelligence Hardening And Release Signing
+
+Tighten the remaining finance intelligence before the broader premium redesign. In progress for the current implementation pass.
+
+Included:
+
+- Profile/onboarding monthly salary remains income planning data only and does not create a daily-use account balance.
+- Salary/deposit SMS with an available balance confirms account balance; salary/deposit SMS without a balance records income while leaving balance estimated or needing review.
+- Account-to-account transfers pair as own savings transfers only when debit and credit sides prove the configured source/target suffixes.
+- Unmatched account-to-account debit transfers stay neutral until reviewed, with classification choices for own savings, another person, bill/payment, or other.
+- AI Chat now uses a strict local draft gate so normal advice questions do not create transaction draft cards.
+- Main app shell and onboarding use safe drawing insets so top bars/content do not sit under the device status bar.
+- Release signing supports local `NIQDAH_KEYSTORE_FILE`, `NIQDAH_KEYSTORE_PASSWORD`, `NIQDAH_KEY_ALIAS`, and `NIQDAH_KEY_PASSWORD` values, with unsigned release APK behavior documented.
+- Dashboard/domain tests keep daily-use balance, savings balance, goal target, and goal progress distinct.
+
+Privacy constraints remain unchanged: no `READ_SMS`, automatic SMS import keeps `rawMessage = ""`, no SMS content is sent to OpenAI/backend, no backend SMS access, no OpenAI API key in the Android app, and no signing secrets committed.

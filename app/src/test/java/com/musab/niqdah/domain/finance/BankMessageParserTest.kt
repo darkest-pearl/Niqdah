@@ -275,6 +275,47 @@ class BankMessageParserTest {
     }
 
     @Test
+    fun accountToAccountCreditToDailyUseIsNotSavingsTransfer() {
+        val parsed = parser.parse(
+            rawMessage = "Your Ac No. XXXXXXXX4052 is credited with AED 1000.00 as Account to Account Transfer. Login to Online Banking for details.",
+            manualSenderName = "BANKTEST",
+            settings = FinanceDefaults.bankMessageParserSettings().copy(
+                dailyUseSource = BankMessageSourceSettings(senderName = "BANKTEST", isEnabled = true),
+                dailyUseAccountSuffix = "4052",
+                savingsAccountSuffix = "4146"
+            ),
+            categories = categories,
+            nowMillis = 1_800_000_000_000L
+        )
+
+        assertEquals(ParsedBankMessageType.INCOME, parsed.type)
+        assertEquals(BankMessageSourceType.DAILY_USE, parsed.sourceType)
+        assertEquals(DepositType.TRANSFER, parsed.depositType)
+        assertEquals("4052", parsed.targetAccountSuffix)
+        assertEquals(FinanceDefaults.UNCATEGORIZED_CATEGORY_ID, parsed.suggestedCategoryId)
+    }
+
+    @Test
+    fun accountToAccountCreditToUnconfiguredSuffixIsNotSavingsTransfer() {
+        val parsed = parser.parse(
+            rawMessage = "Your Ac No. XXXXXXXX9999 is credited with AED 1000.00 as Account to Account Transfer. Login to Online Banking for details.",
+            manualSenderName = "BANKTEST",
+            settings = FinanceDefaults.bankMessageParserSettings().copy(
+                dailyUseSource = BankMessageSourceSettings(senderName = "BANKTEST", isEnabled = true),
+                dailyUseAccountSuffix = "4052",
+                savingsAccountSuffix = "4146"
+            ),
+            categories = categories,
+            nowMillis = 1_800_000_000_000L
+        )
+
+        assertEquals(ParsedBankMessageType.INCOME, parsed.type)
+        assertEquals(DepositType.TRANSFER, parsed.depositType)
+        assertEquals("9999", parsed.targetAccountSuffix)
+        assertEquals(FinanceDefaults.UNCATEGORIZED_CATEGORY_ID, parsed.suggestedCategoryId)
+    }
+
+    @Test
     fun depositedToDailyUseAccountBecomesGeneralDepositWithUnconfirmedBalance() {
         val parsed = parser.parse(
             rawMessage = "AED 3500.00 has been deposited to your account no. XXXXXXXX4052. Login to Mobile or Online Banking for details.",

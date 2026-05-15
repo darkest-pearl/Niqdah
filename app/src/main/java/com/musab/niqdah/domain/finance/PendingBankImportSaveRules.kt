@@ -35,10 +35,8 @@ object PendingBankImportSaveRules {
                 candidate.amount == amount &&
                 candidate.currency == pendingImport.currency &&
                 kotlin.math.abs(candidate.occurredAtMillis - pendingImport.occurredAtMillis) <= DAY_MILLIS &&
-                setOf(candidate.type, pendingImport.type) == setOf(
-                    ParsedBankMessageType.SAVINGS_TRANSFER,
-                    ParsedBankMessageType.INTERNAL_TRANSFER_OUT
-                )
+                setOf(candidate.type, pendingImport.type) == INTERNAL_TRANSFER_PAIR_TYPES &&
+                hasOwnSavingsTransferSuffixProof(pendingImport, candidate)
         }
     }
 
@@ -47,10 +45,8 @@ object PendingBankImportSaveRules {
         pairedImport: PendingBankImport?
     ): Boolean =
         pairedImport != null &&
-            setOf(pendingImport.type, pairedImport.type) == setOf(
-                ParsedBankMessageType.SAVINGS_TRANSFER,
-                ParsedBankMessageType.INTERNAL_TRANSFER_OUT
-            )
+            setOf(pendingImport.type, pairedImport.type) == INTERNAL_TRANSFER_PAIR_TYPES &&
+            hasOwnSavingsTransferSuffixProof(pendingImport, pairedImport)
 
     fun idsToRemoveAfterSuccessfulSave(
         pendingImport: PendingBankImport,
@@ -86,7 +82,8 @@ object PendingBankImportSaveRules {
             createdAtMillis = nowMillis,
             messageTimestampMillis = debitImport.occurredAtMillis,
             note = noteParts.joinToString("\n"),
-            sourceMessageHash = debitImport.messageHash
+            sourceMessageHash = debitImport.messageHash,
+            amountMinor = effectiveMinorUnits(debitImport.amountMinor, debitImport.amount) ?: 0L
         )
     }
 
@@ -126,4 +123,21 @@ object PendingBankImportSaveRules {
             .filter { it.isNotBlank() }
             .distinct()
             .joinToString("\n")
+
+    private fun hasOwnSavingsTransferSuffixProof(
+        first: PendingBankImport,
+        second: PendingBankImport
+    ): Boolean {
+        val debit = listOf(first, second).firstOrNull { it.type == ParsedBankMessageType.INTERNAL_TRANSFER_OUT }
+            ?: return false
+        val credit = listOf(first, second).firstOrNull { it.type == ParsedBankMessageType.SAVINGS_TRANSFER }
+            ?: return false
+        return debit.sourceAccountSuffix.filter { it.isDigit() }.length == 4 &&
+            credit.targetAccountSuffix.filter { it.isDigit() }.length == 4
+    }
+
+    private val INTERNAL_TRANSFER_PAIR_TYPES = setOf(
+        ParsedBankMessageType.SAVINGS_TRANSFER,
+        ParsedBankMessageType.INTERNAL_TRANSFER_OUT
+    )
 }

@@ -2,6 +2,7 @@ package com.musab.niqdah.domain.finance
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -36,6 +37,36 @@ class OnboardingPlannerTest {
         assertEquals(2_000.0, plan.profile.monthlySavingsTarget, 0.001)
         assertEquals("BANK1", plan.bankMessageSettings.dailyUseSource.senderName)
         assertFalse(plan.bankMessageSettings.isAutomaticSmsImportEnabled)
+    }
+
+    @Test
+    fun onboardingSalaryDoesNotCreateDailyUseBalance() {
+        val plan = OnboardingPlanner.buildPlan(
+            uid = "uid",
+            state = sampleState().copy(monthlyIncome = 5_000.0),
+            now = 123L,
+            today = LocalDate.parse("2026-05-10")
+        )
+        val data = FinanceData(
+            profile = plan.profile,
+            financialProfile = plan.financialProfile,
+            categories = plan.categories,
+            transactions = emptyList(),
+            incomeTransactions = emptyList(),
+            pendingBankImports = emptyList(),
+            accountBalanceSnapshots = emptyList(),
+            accountLedgerEntries = emptyList(),
+            internalTransferRecords = emptyList(),
+            merchantRules = emptyList(),
+            goals = plan.goals,
+            debt = plan.debt,
+            bankMessageSettings = plan.bankMessageSettings,
+            reminderSettings = plan.reminderSettings,
+            necessaryItems = plan.necessaryItems
+        )
+
+        assertEquals(5_000.0, data.profile.salary, 0.001)
+        assertNull(data.latestDailyUseBalanceStatus)
     }
 
     @Test

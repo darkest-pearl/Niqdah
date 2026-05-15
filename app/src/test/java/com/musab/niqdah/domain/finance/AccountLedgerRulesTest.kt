@@ -1,6 +1,7 @@
 package com.musab.niqdah.domain.finance
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -37,6 +38,36 @@ class AccountLedgerRulesTest {
 
         assertEquals(AccountLedgerEventType.ESTIMATED_DEPOSIT, entry.eventType)
         assertEquals(AccountBalanceConfidence.NEEDS_REVIEW, entry.confidence)
+        assertNull(entry.balanceAfterMinor)
+    }
+
+    @Test
+    fun salaryDepositSmsWithAvailableBalanceConfirmsBalance() {
+        val entry = AccountLedgerRules.pendingImportEntry(
+            pendingImport = depositPendingImport(availableBalanceMinor = 355_000L).copy(
+                depositType = DepositType.SALARY
+            ),
+            previousBalance = null,
+            nowMillis = 2_000L
+        )
+
+        assertEquals(AccountLedgerEventType.BALANCE_CONFIRMED_SMS, entry.eventType)
+        assertEquals(AccountBalanceConfidence.CONFIRMED, entry.confidence)
+        assertEquals(355_000L, entry.balanceAfterMinor)
+    }
+
+    @Test
+    fun salaryDepositSmsWithoutAvailableBalanceDoesNotConfirmBalance() {
+        val entry = AccountLedgerRules.pendingImportEntry(
+            pendingImport = depositPendingImport(availableBalanceMinor = null).copy(
+                depositType = DepositType.SALARY
+            ),
+            previousBalance = null,
+            nowMillis = 2_000L
+        )
+
+        assertEquals(AccountLedgerEventType.ESTIMATED_DEPOSIT, entry.eventType)
+        assertNotEquals(AccountBalanceConfidence.CONFIRMED, entry.confidence)
         assertNull(entry.balanceAfterMinor)
     }
 

@@ -17,7 +17,13 @@ functions/lib/
 # Signing material
 *.jks
 *.keystore
+*.p12
+*.pk8
+*.x509.pem
 keystore.properties
+release-signing.properties
+Niqdah-private/
+.android-signing/
 
 # OS files
 .DS_Store

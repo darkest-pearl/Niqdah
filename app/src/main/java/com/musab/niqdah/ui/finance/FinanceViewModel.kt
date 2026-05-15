@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.musab.niqdah.domain.ai.AiFinanceDraftAction
+import com.musab.niqdah.domain.ai.AiFinanceDraftGate
 import com.musab.niqdah.domain.finance.AccountBalanceSnapshot
 import com.musab.niqdah.domain.finance.AccountLedgerRules
 import com.musab.niqdah.domain.finance.AccountKind
@@ -18,6 +19,7 @@ import com.musab.niqdah.domain.finance.DebtTracker
 import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.DisciplineReminderScheduler
 import com.musab.niqdah.domain.finance.ExpenseTransaction
+import com.musab.niqdah.domain.finance.ExternalTransferClassification
 import com.musab.niqdah.domain.finance.FinanceCalculator
 import com.musab.niqdah.domain.finance.FinanceData
 import com.musab.niqdah.domain.finance.FinanceDates
@@ -246,12 +248,10 @@ class FinanceViewModel(
 
     fun previewAiFinanceDraftAction(messageInput: String): AiFinanceDraftAction? {
         val parsed = previewBankMessage(senderInput = "", messageInput = messageInput)
-        if (parsed.type == ParsedBankMessageType.INFORMATIONAL ||
-            (parsed.amount == null && parsed.type == ParsedBankMessageType.UNKNOWN)
-        ) {
-            return null
-        }
-        return parsed.toAiFinanceDraftAction()
+        if (!AiFinanceDraftGate.shouldCreateDraft(messageInput, parsed)) return null
+        return parsed
+            .copy(type = AiFinanceDraftGate.draftTypeFor(messageInput, parsed))
+            .toAiFinanceDraftAction()
     }
 
     fun saveImportedBankMessage(
@@ -1058,14 +1058,14 @@ class FinanceViewModel(
                     )
                 }
                 ParsedBankMessageType.INTERNAL_TRANSFER_OUT -> {
-                    financeRepository.upsertInternalTransferRecord(
-                        PendingBankImportSaveRules.internalTransferRecord(
-                            debitImport = pendingImport,
-                            pairedCreditImport = paired?.takeIf { it.type == ParsedBankMessageType.SAVINGS_TRANSFER },
-                            nowMillis = now
-                        )
-                    )
                     if (paired?.type == ParsedBankMessageType.SAVINGS_TRANSFER) {
+                        financeRepository.upsertInternalTransferRecord(
+                            PendingBankImportSaveRules.internalTransferRecord(
+                                debitImport = pendingImport,
+                                pairedCreditImport = paired,
+                                nowMillis = now
+                            )
+                        )
                         saveSavingsContribution(
                             amount = amount,
                             currency = pendingImport.currency,
@@ -1073,17 +1073,67 @@ class FinanceViewModel(
                             occurredAtMillis = paired.occurredAtMillis,
                             now = now
                         )
-                    }
-                    SaveResult.Saved(
-                        if (isPairedTransfer) {
-                            PendingBankImportSaveRules.pairedInternalTransferSavedMessage()
-                        } else {
-                            PendingBankImportSaveRules.internalTransferSavedMessage(
-                                pendingImport = pendingImport,
-                                latestDailyUseBalance = _uiState.value.data.latestDailyUseBalance
-                            )
+                        SaveResult.Saved(PendingBankImportSaveRules.pairedInternalTransferSavedMessage())
+                    } else {
+                        when (pendingImport.externalTransferClassification) {
+                            ExternalTransferClassification.TRANSFER_TO_MY_SAVINGS -> {
+                                financeRepository.upsertInternalTransferRecord(
+                                    PendingBankImportSaveRules.internalTransferRecord(
+                                        debitImport = pendingImport,
+                                        pairedCreditImport = null,
+                                        nowMillis = now
+                                    )
+                                )
+                                saveSavingsContribution(
+                                    amount = amount,
+                                    currency = pendingImport.currency,
+                                    description = pendingImport.noteWithReviewContext(),
+                                    occurredAtMillis = pendingImport.occurredAtMillis,
+                                    now = now
+                                )
+                                SaveResult.Saved(
+                                    "Saved as transfer to your savings. Confirm savings balance when bank SMS arrives."
+                                )
+                            }
+                            ExternalTransferClassification.TRANSFER_TO_ANOTHER_PERSON,
+                            ExternalTransferClassification.BILL_PAYMENT,
+                            ExternalTransferClassification.OTHER -> {
+                                val classification = requireNotNull(pendingImport.externalTransferClassification)
+                                financeRepository.upsertTransaction(
+                                    ExpenseTransaction(
+                                        id = UUID.randomUUID().toString(),
+                                        categoryId = categoryIdForExternalTransfer(classification),
+                                        amount = amount,
+                                        currency = pendingImport.currency,
+                                        note = pendingImport.noteWithReviewContext()
+                                            .ifBlank { classification.label },
+                                        necessity = NecessityLevel.OPTIONAL,
+                                        occurredAtMillis = pendingImport.occurredAtMillis,
+                                        yearMonth = FinanceDates.yearMonthFromMillis(pendingImport.occurredAtMillis),
+                                        createdAtMillis = now,
+                                        updatedAtMillis = now,
+                                        amountMinor = pendingImport.amountMinor ?: majorToMinorUnits(amount)
+                                    )
+                                )
+                                SaveResult.Saved("Saved as external transfer. Not counted as savings.")
+                            }
+                            null -> {
+                                financeRepository.upsertInternalTransferRecord(
+                                    PendingBankImportSaveRules.internalTransferRecord(
+                                        debitImport = pendingImport,
+                                        pairedCreditImport = null,
+                                        nowMillis = now
+                                    )
+                                )
+                                SaveResult.Saved(
+                                    PendingBankImportSaveRules.internalTransferSavedMessage(
+                                        pendingImport = pendingImport,
+                                        latestDailyUseBalance = _uiState.value.data.latestDailyUseBalance
+                                    )
+                                )
+                            }
                         }
-                    )
+                    }
                 }
                 ParsedBankMessageType.INFORMATIONAL ->
                     SaveResult.Ignored("This message is informational and was not saved as a transaction.")
@@ -1385,6 +1435,22 @@ class FinanceViewModel(
             .filter { it.isNotBlank() }
             .distinct()
             .joinToString("\n")
+
+    private fun categoryIdForExternalTransfer(classification: ExternalTransferClassification): String {
+        val categories = _uiState.value.data.categories
+        return when (classification) {
+            ExternalTransferClassification.TRANSFER_TO_ANOTHER_PERSON ->
+                categories.firstOrNull { category ->
+                    category.id == "family" || category.name.contains("family", ignoreCase = true)
+                }?.id ?: FinanceDefaults.UNCATEGORIZED_CATEGORY_ID
+            ExternalTransferClassification.BILL_PAYMENT ->
+                categories.firstOrNull { it.type == com.musab.niqdah.domain.finance.CategoryType.FIXED }?.id
+                    ?: FinanceDefaults.UNCATEGORIZED_CATEGORY_ID
+            ExternalTransferClassification.OTHER,
+            ExternalTransferClassification.TRANSFER_TO_MY_SAVINGS ->
+                FinanceDefaults.UNCATEGORIZED_CATEGORY_ID
+        }
+    }
 
     private fun formatDraftAmount(amount: Double): String =
         if (amount % 1.0 == 0.0) amount.toLong().toString() else amount.toString()

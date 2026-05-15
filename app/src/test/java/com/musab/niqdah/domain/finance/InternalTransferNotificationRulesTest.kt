@@ -78,6 +78,7 @@ class InternalTransferNotificationRulesTest {
 
         assertEquals(InternalTransferNotificationState.REMINDER, plan?.state)
         assertEquals("Transfer still waiting for matching credit", plan?.title)
+        assertTrue(plan?.text.orEmpty().contains("transfer to another account"))
         assertEquals(InternalTransferNotificationState.WAITING, notYet?.state)
     }
 

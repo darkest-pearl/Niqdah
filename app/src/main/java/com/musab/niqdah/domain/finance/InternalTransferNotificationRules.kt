@@ -63,7 +63,7 @@ object InternalTransferNotificationRules {
             primaryImportId = debitImport.id,
             state = InternalTransferNotificationState.REMINDER,
             title = "Transfer still waiting for matching credit",
-            text = "${moneyText(debitImport)} was debited from ${debitImport.sourceAccountSuffix.ifBlank { "the source account" }} but no matching credit was detected yet. Please review.",
+            text = "${moneyText(debitImport)} may be a transfer to another account. Review before saving.",
             actions = listOf(InternalTransferNotificationAction.REVIEW, InternalTransferNotificationAction.DISMISS)
         )
 

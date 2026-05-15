@@ -28,6 +28,7 @@ import com.musab.niqdah.domain.finance.DebtProfile
 import com.musab.niqdah.domain.finance.DebtTracker
 import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.ExpenseTransaction
+import com.musab.niqdah.domain.finance.ExternalTransferClassification
 import com.musab.niqdah.domain.finance.FinanceData
 import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.FinanceRepository
@@ -759,6 +760,7 @@ class FirebaseFinanceRepository(
             "suggestedNecessity" to suggestedNecessity.name,
             "confidence" to confidence.name,
             "depositType" to depositType.name,
+            "externalTransferClassification" to externalTransferClassification?.name,
             "receivedAtMillis" to receivedAtMillis,
             "createdAtMillis" to createdAtMillis,
             "updatedAtMillis" to updatedAtMillis
@@ -1056,7 +1058,10 @@ class FirebaseFinanceRepository(
                 ?: nullableDouble("originalForeignAmount")?.let { majorToMinorUnits(it) },
             inferredAccountDebitMinor = nullableLong("inferredAccountDebitMinor")
                 ?: nullableDouble("inferredAccountDebit")?.let { majorToMinorUnits(it) },
-            depositType = depositType(getString("depositType"))
+            depositType = depositType(getString("depositType")),
+            externalTransferClassification = externalTransferClassification(
+                getString("externalTransferClassification")
+            )
         )
 
     private fun DocumentSnapshot.toMerchantRule(): MerchantRule? {
@@ -1373,6 +1378,9 @@ class FirebaseFinanceRepository(
 
     private fun depositType(value: String?): DepositType =
         DepositType.entries.firstOrNull { it.name == value } ?: DepositType.OTHER_INCOME
+
+    private fun externalTransferClassification(value: String?): ExternalTransferClassification? =
+        ExternalTransferClassification.entries.firstOrNull { it.name == value }
 
     private fun necessaryItemRecurrence(value: String?): NecessaryItemRecurrence =
         NecessaryItemRecurrence.entries.firstOrNull { it.name == value }

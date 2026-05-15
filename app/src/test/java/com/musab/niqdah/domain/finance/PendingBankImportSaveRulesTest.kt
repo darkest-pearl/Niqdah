@@ -112,6 +112,29 @@ class PendingBankImportSaveRulesTest {
     }
 
     @Test
+    fun debitWithUnrelatedAccountCreditDoesNotPairAsSavingsTransfer() {
+        val debit = debitPendingImport()
+        val unrelatedCredit = parser.parsePendingImport(
+            rawMessage = "Your Ac No. XXXXXXXX9999 is credited with AED 1000.00 as Account to Account Transfer. Login to Online Banking for details.",
+            senderName = "BANKTEST",
+            settings = settings,
+            categories = categories,
+            messageHash = "unrelated-credit-hash",
+            receivedAtMillis = occurredAt + 60_000L,
+            nowMillis = occurredAt + 60_000L
+        )
+
+        val paired = PendingBankImportSaveRules.findMatchingTransferCounterpart(
+            pendingImport = debit,
+            candidates = listOf(debit, unrelatedCredit)
+        )
+
+        assertEquals(ParsedBankMessageType.INTERNAL_TRANSFER_OUT, debit.type)
+        assertEquals(ParsedBankMessageType.INCOME, unrelatedCredit.type)
+        assertNull(paired)
+    }
+
+    @Test
     fun debitAndCreditPairCreatesSamePlanWhenSavingCreditFirst() {
         val debit = debitPendingImport()
         val credit = creditPendingImport()

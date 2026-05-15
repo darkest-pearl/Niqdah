@@ -47,6 +47,7 @@ import com.musab.niqdah.domain.finance.AccountKind
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.ExpenseTransaction
+import com.musab.niqdah.domain.finance.ExternalTransferClassification
 import com.musab.niqdah.domain.finance.FinanceDates
 import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.InternalTransferRecord
@@ -516,6 +517,7 @@ private fun PendingBankImportCard(
     val pendingImport = displayItem.primaryImport
     var showMessage by remember(pendingImport.id) { mutableStateOf(false) }
     var isEditing by remember(pendingImport.id) { mutableStateOf(false) }
+    var isTransferReviewOpen by remember(pendingImport.id) { mutableStateOf(false) }
     val isUnmatchedInternalDebit = displayItem is PendingBankImportDisplayItem.InternalTransferWaiting
     val hasMatchedPair = displayItem is PendingBankImportDisplayItem.InternalTransferReadyPair
     val isCreditOnlySavingsTransfer = displayItem is PendingBankImportDisplayItem.CreditOnlySavingsTransfer
@@ -564,7 +566,7 @@ private fun PendingBankImportCard(
                 )
                 Text(
                     text = if (isPastReminderThreshold) {
-                        "Matching credit has not arrived yet. Review this transfer."
+                        "This may be a transfer to another account. Review before saving."
                     } else {
                         "Wait for matching credit if this was a transfer to savings."
                     },
@@ -663,7 +665,7 @@ private fun PendingBankImportCard(
             if (displayItem.isManualSaveVisible) {
                 TextButton(
                     enabled = !isSaving,
-                    onClick = { onSave(pendingImport) }
+                    onClick = { isTransferReviewOpen = true }
                 ) {
                     Text(if (isSaving) "Saving..." else "Save unmatched transfer")
                 }
@@ -682,6 +684,55 @@ private fun PendingBankImportCard(
             }
         )
     }
+
+    if (isTransferReviewOpen) {
+        UnmatchedTransferReviewDialog(
+            pendingImport = pendingImport,
+            onDismiss = { isTransferReviewOpen = false },
+            onSave = { classification ->
+                onSave(pendingImport.copy(externalTransferClassification = classification))
+                isTransferReviewOpen = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun UnmatchedTransferReviewDialog(
+    pendingImport: PendingBankImport,
+    onDismiss: () -> Unit,
+    onSave: (ExternalTransferClassification) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Classify transfer") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "No matching credit to your savings account has arrived yet. Choose what this transfer was before saving it.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                PendingImportLine(
+                    label = "Amount",
+                    value = pendingImport.amount?.let { formatMoney(it, pendingImport.currency) } ?: "Missing"
+                )
+                ExternalTransferClassification.entries.forEach { classification ->
+                    OutlinedButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { onSave(classification) }
+                    ) {
+                        Text(classification.label)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 private fun PendingBankImportDisplayItem.pendingCardTitle(): String =

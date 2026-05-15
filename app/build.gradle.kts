@@ -7,18 +7,16 @@ if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
 }
 
-val releaseStoreFilePath =
-    providers.gradleProperty("NIQDAH_RELEASE_STORE_FILE").orNull
-        ?: System.getenv("NIQDAH_RELEASE_STORE_FILE")
-val releaseStorePassword =
-    providers.gradleProperty("NIQDAH_RELEASE_STORE_PASSWORD").orNull
-        ?: System.getenv("NIQDAH_RELEASE_STORE_PASSWORD")
-val releaseKeyAlias =
-    providers.gradleProperty("NIQDAH_RELEASE_KEY_ALIAS").orNull
-        ?: System.getenv("NIQDAH_RELEASE_KEY_ALIAS")
-val releaseKeyPassword =
-    providers.gradleProperty("NIQDAH_RELEASE_KEY_PASSWORD").orNull
-        ?: System.getenv("NIQDAH_RELEASE_KEY_PASSWORD")
+fun signingProperty(name: String, legacyName: String): String? =
+    providers.gradleProperty(name).orNull
+        ?: System.getenv(name)
+        ?: providers.gradleProperty(legacyName).orNull
+        ?: System.getenv(legacyName)
+
+val releaseStoreFilePath = signingProperty("NIQDAH_KEYSTORE_FILE", "NIQDAH_RELEASE_STORE_FILE")
+val releaseStorePassword = signingProperty("NIQDAH_KEYSTORE_PASSWORD", "NIQDAH_RELEASE_STORE_PASSWORD")
+val releaseKeyAlias = signingProperty("NIQDAH_KEY_ALIAS", "NIQDAH_RELEASE_KEY_ALIAS")
+val releaseKeyPassword = signingProperty("NIQDAH_KEY_PASSWORD", "NIQDAH_RELEASE_KEY_PASSWORD")
 val hasReleaseSigningConfig = listOf(
     releaseStoreFilePath,
     releaseStorePassword,

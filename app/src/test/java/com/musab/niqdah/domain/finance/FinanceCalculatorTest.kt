@@ -1,6 +1,7 @@
 package com.musab.niqdah.domain.finance
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 class FinanceCalculatorTest {
@@ -115,5 +116,55 @@ class FinanceCalculatorTest {
         assertEquals(1_501.09, dashboard.totalMonthlyIncome, 0.001)
         assertEquals(17.25, dashboard.totalSpent, 0.001)
         assertEquals(1_466.59, dashboard.remainingSafeToSpend, 0.001)
+    }
+
+    @Test
+    fun savingsAccountBalanceAndGoalProgressRemainDistinct() {
+        val data = FinanceData(
+            profile = FinanceDefaults.userProfile(uid = "uid", now = 0L).copy(onboardingCompleted = true),
+            categories = FinanceDefaults.budgetCategories(now = 0L),
+            transactions = emptyList(),
+            incomeTransactions = emptyList(),
+            pendingBankImports = emptyList(),
+            accountBalanceSnapshots = emptyList(),
+            accountLedgerEntries = listOf(
+                AccountLedgerEntry(
+                    id = "savings-balance",
+                    accountKind = AccountKind.SAVINGS,
+                    accountSuffix = "4146",
+                    eventType = AccountLedgerEventType.BALANCE_CONFIRMED_SMS,
+                    amountMinor = 0L,
+                    balanceAfterMinor = 200_000L,
+                    currency = "AED",
+                    confidence = AccountBalanceConfidence.CONFIRMED,
+                    source = AccountLedgerSource.SMS,
+                    createdAtMillis = 123L,
+                    note = "Confirmed savings balance"
+                )
+            ),
+            internalTransferRecords = emptyList(),
+            merchantRules = emptyList(),
+            goals = listOf(
+                SavingsGoal(
+                    id = FinanceDefaults.PRIMARY_GOAL_ID,
+                    name = "Marriage",
+                    targetAmount = 5_000.0,
+                    savedAmount = 1_000.0,
+                    isPrimary = true,
+                    targetAmountMinor = 500_000L,
+                    savedAmountMinor = 100_000L
+                )
+            ),
+            debt = FinanceDefaults.debtTracker(now = 0L),
+            bankMessageSettings = FinanceDefaults.bankMessageParserSettings(),
+            reminderSettings = FinanceDefaults.reminderSettings(now = 0L)
+        )
+
+        val savingsBalance = data.latestSavingsBalanceStatus
+        val dashboard = FinanceCalculator.dashboard(data, yearMonth = "2026-05", now = 0L)
+
+        assertNotNull(savingsBalance)
+        assertEquals(200_000L, savingsBalance?.amountMinor)
+        assertEquals(0.2, dashboard.primaryGoalProgress, 0.001)
     }
 }

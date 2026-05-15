@@ -452,22 +452,15 @@ private class PendingBankImportNotificationHandler(
             return null
         }
         val amount = pendingImport.amount ?: return null
-        val dayMillis = 24 * 60 * 60 * 1000L
-        return pendingBankImportsCollection(db)
+        val candidates = pendingBankImportsCollection(db)
             .get()
             .awaitValue()
             .documents
             .mapNotNull { it.toPendingBankImport() }
-            .firstOrNull { candidate ->
-                candidate.id != pendingImport.id &&
-                    candidate.currency == pendingImport.currency &&
-                    candidate.amount == amount &&
-                    kotlin.math.abs(candidate.occurredAtMillis - pendingImport.occurredAtMillis) <= dayMillis &&
-                    setOf(candidate.type, pendingImport.type) == setOf(
-                        ParsedBankMessageType.SAVINGS_TRANSFER,
-                        ParsedBankMessageType.INTERNAL_TRANSFER_OUT
-                    )
-            }
+        return PendingBankImportSaveRules.findMatchingTransferCounterpart(
+            pendingImport = pendingImport.copy(amount = amount),
+            candidates = candidates
+        )
     }
 
     private fun userDocument(db: FirebaseFirestore) =
