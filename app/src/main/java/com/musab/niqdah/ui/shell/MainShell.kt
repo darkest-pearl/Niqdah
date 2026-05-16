@@ -16,6 +16,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -27,8 +28,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import com.musab.niqdah.ui.ai.AiChatScreen
 import com.musab.niqdah.ui.ai.AiChatUiState
 import com.musab.niqdah.ui.ai.AiChatViewModel
@@ -36,6 +37,7 @@ import com.musab.niqdah.ui.finance.DashboardScreen
 import com.musab.niqdah.ui.finance.FinanceUiState
 import com.musab.niqdah.ui.finance.FinanceViewModel
 import com.musab.niqdah.ui.finance.GoalsScreen
+import com.musab.niqdah.ui.finance.PremiumTopBar
 import com.musab.niqdah.ui.finance.SettingsScreen
 import com.musab.niqdah.ui.finance.TransactionsScreen
 
@@ -72,21 +74,13 @@ fun MainShell(
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
-            CenterAlignedTopAppBar(
-                windowInsets = WindowInsets.safeDrawing.only(
-                    WindowInsetsSides.Top + WindowInsetsSides.Horizontal
-                ),
-                title = {
-                    Text(text = "Niqdah", fontWeight = FontWeight.SemiBold)
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface
-                )
-            )
+            PremiumTopBar(title = "Niqdah")
         },
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp
+            ) {
                 ShellDestination.entries.forEach { destination ->
                     NavigationBarItem(
                         selected = selectedDestination == destination,
@@ -103,7 +97,14 @@ fun MainShell(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                        }
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     )
                 }
             }

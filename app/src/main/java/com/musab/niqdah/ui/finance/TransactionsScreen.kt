@@ -148,53 +148,27 @@ fun TransactionsScreen(
             }
         }
         item {
-            SectionHeader(title = "Quick add")
+            SectionHeader(title = "Quick actions")
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    MonthFilter(
-                        selectedMonth = uiState.selectedTransactionMonth,
-                        months = uiState.availableMonths,
-                        onMonthSelected = onMonthSelected,
-                        modifier = Modifier.weight(1f)
-                    )
-                    CategoryFilter(
-                        selectedCategoryId = uiState.selectedTransactionCategoryId,
-                        categories = categories,
-                        onCategorySelected = onCategoryFilterSelected,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Button(
+                PrimaryActionButton(
                     modifier = Modifier.fillMaxWidth(),
+                    label = "Add expense",
+                    icon = Icons.Rounded.Add,
                     enabled = categories.isNotEmpty(),
-                    shape = MaterialTheme.shapes.medium,
                     onClick = {
                         editingTransaction = null
                         showDialog = true
                     }
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Add,
-                        contentDescription = null,
-                        modifier = Modifier.padding(end = 8.dp).size(18.dp)
-                    )
-                    Text(text = "Add transaction")
-                }
-                OutlinedButton(
+                )
+                SecondaryActionButton(
                     modifier = Modifier.fillMaxWidth(),
+                    label = "Record deposit",
+                    icon = Icons.Rounded.Add,
                     enabled = !uiState.isSaving,
-                    shape = MaterialTheme.shapes.medium,
                     onClick = { showDepositDialog = true }
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Add,
-                        contentDescription = null,
-                        modifier = Modifier.padding(end = 8.dp).size(18.dp)
-                    )
-                    Text(text = "Record salary/deposit")
-                }
+                )
             }
         }
         item {
@@ -205,6 +179,25 @@ fun TransactionsScreen(
                 onPreviewBankMessage = onPreviewBankMessage,
                 onSaveImportedBankMessage = onSaveImportedBankMessage
             )
+        }
+        item {
+            SectionHeader(title = "Search and filters")
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MonthFilter(
+                    selectedMonth = uiState.selectedTransactionMonth,
+                    months = uiState.availableMonths,
+                    onMonthSelected = onMonthSelected,
+                    modifier = Modifier.weight(1f)
+                )
+                CategoryFilter(
+                    selectedCategoryId = uiState.selectedTransactionCategoryId,
+                    categories = categories,
+                    onCategorySelected = onCategoryFilterSelected,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
         item { SectionHeader(title = "History") }
 
@@ -346,16 +339,7 @@ private fun TransactionCard(
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+    PremiumCard {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -388,7 +372,6 @@ private fun TransactionCard(
                     Icon(imageVector = Icons.Rounded.Delete, contentDescription = "Delete transaction")
                 }
             }
-        }
     }
 }
 
@@ -398,16 +381,7 @@ private fun IncomeTransactionCard(
     fallbackCurrency: String,
     onDelete: () -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+    PremiumCard(containerColor = MaterialTheme.colorScheme.secondaryContainer) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -442,7 +416,6 @@ private fun IncomeTransactionCard(
                     Icon(imageVector = Icons.Rounded.Delete, contentDescription = "Delete income")
                 }
             }
-        }
     }
 }
 
@@ -451,16 +424,7 @@ private fun InternalTransferRecordCard(
     record: InternalTransferRecord,
     fallbackCurrency: String
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+    PremiumCard(containerColor = MaterialTheme.colorScheme.tertiaryContainer) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -500,7 +464,6 @@ private fun InternalTransferRecordCard(
                 text = record.note.ifBlank { "Not counted as spending." },
                 color = MaterialTheme.colorScheme.onTertiaryContainer
             )
-        }
     }
 }
 
@@ -525,16 +488,7 @@ private fun PendingBankImportCard(
         System.currentTimeMillis() - pendingImport.createdAtMillis.coerceAtLeast(pendingImport.receivedAtMillis) >=
         reminderThresholdMinutes.coerceAtLeast(1) * 60_000L
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+    PremiumCard(containerColor = MaterialTheme.colorScheme.primaryContainer) {
             Text(
                 text = displayItem.pendingCardTitle(),
                 style = MaterialTheme.typography.titleMedium,
@@ -644,20 +598,18 @@ private fun PendingBankImportCard(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (displayItem.isPrimarySaveVisible) {
-                    Button(
+                    PrimaryActionButton(
                         modifier = Modifier.weight(1f),
+                        label = PendingBankImportSaveRules.saveButtonLabel(isSaving),
                         enabled = !isSaving,
                         onClick = { onSave(pendingImport) }
-                    ) {
-                        Text(PendingBankImportSaveRules.saveButtonLabel(isSaving))
-                    }
+                    )
                 }
-                OutlinedButton(
+                SecondaryActionButton(
                     modifier = Modifier.weight(1f),
+                    label = if (isUnmatchedInternalDebit) "Review" else "Edit",
                     onClick = { isEditing = true }
-                ) {
-                    Text(if (isUnmatchedInternalDebit) "Review" else "Edit")
-                }
+                )
                 TextButton(onClick = { onDismiss(pendingImport) }) {
                     Text("Dismiss")
                 }
@@ -670,7 +622,6 @@ private fun PendingBankImportCard(
                     Text(if (isSaving) "Saving..." else "Save unmatched transfer")
                 }
             }
-        }
     }
 
     if (isEditing) {

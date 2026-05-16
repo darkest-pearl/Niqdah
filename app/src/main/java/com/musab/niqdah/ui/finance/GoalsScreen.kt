@@ -74,11 +74,20 @@ fun GoalsScreen(
         }
         item { SectionHeader(title = "Primary goal") }
         items(goals.take(1), key = { it.id }) { goal ->
-            GoalCard(
+            GoalHeroCard(
                 goal = goal,
                 currency = currency,
                 onUpdate = { editingGoal = goal }
             )
+        }
+        item {
+            SectionHeader(
+                title = "Savings account",
+                subtitle = "Actual or estimated account money is separate from goal contributions."
+            )
+        }
+        item {
+            AccountBalanceGoalContext(uiState = uiState)
         }
         if (goals.size > 1) {
             item { SectionHeader(title = "Other goals") }
@@ -124,19 +133,40 @@ fun GoalsScreen(
 }
 
 @Composable
+private fun GoalHeroCard(goal: SavingsGoal, currency: String, onUpdate: () -> Unit) {
+    val progress = if (goal.targetAmount <= 0.0) 0.0 else goal.savedAmount / goal.targetAmount
+    GoalProgressCard(
+        title = goal.name,
+        saved = formatMoney(goal.savedAmount, currency),
+        target = formatMoney(goal.targetAmount, currency),
+        progress = progress,
+        subtitle = "This progress is the contribution toward the target, not the bank account balance."
+    )
+    PrimaryActionButton(
+        modifier = Modifier.fillMaxWidth(),
+        label = "Update saved amount",
+        onClick = onUpdate
+    )
+}
+
+@Composable
+private fun AccountBalanceGoalContext(uiState: FinanceUiState) {
+    val status = uiState.data.latestSavingsBalanceStatus
+    BalanceCard(
+        title = "Savings account balance",
+        amount = status?.let { formatMoneyMinor(it.amountMinor, it.currency) } ?: "Not known yet",
+        confidence = status?.confidence?.label ?: "Awaiting balance",
+        note = status?.let {
+            "Balance confidence comes from ${it.source.label}. Goal progress is updated separately."
+        } ?: "Add a bank SMS or manual balance confirmation to show actual savings account money."
+    )
+}
+
+@Composable
 private fun GoalCard(goal: SavingsGoal, currency: String, onUpdate: () -> Unit) {
     val progress = if (goal.targetAmount <= 0.0) 0.0 else goal.savedAmount / goal.targetAmount
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+    PremiumCard {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -156,14 +186,11 @@ private fun GoalCard(goal: SavingsGoal, currency: String, onUpdate: () -> Unit) 
                 text = "${formatMoney(goal.savedAmount, currency)} saved of ${formatMoney(goal.targetAmount, currency)}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Button(
+            SecondaryActionButton(
                 modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.medium,
+                label = "Update saved amount",
                 onClick = onUpdate
-            ) {
-                Text("Update saved amount")
-            }
-        }
+            )
     }
 }
 
@@ -173,16 +200,7 @@ private fun DebtCard(uiState: FinanceUiState, onRecordPayment: () -> Unit) {
     val debt = uiState.data.debt
     val progress = uiState.dashboard.debtProgress
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+    PremiumCard(containerColor = MaterialTheme.colorScheme.primaryContainer) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Icon(
                     imageVector = Icons.Rounded.Payments,
@@ -211,14 +229,11 @@ private fun DebtCard(uiState: FinanceUiState, onRecordPayment: () -> Unit) {
                 text = "Monthly auto reduction: ${formatMoney(debt.monthlyAutoReduction, currency)}",
                 color = MaterialTheme.colorScheme.onPrimaryContainer
             )
-            Button(
+            PrimaryActionButton(
                 modifier = Modifier.fillMaxWidth(),
-                shape = MaterialTheme.shapes.medium,
+                label = "Record debt payment",
                 onClick = onRecordPayment
-            ) {
-                Text("Record debt payment")
-            }
-        }
+            )
     }
 }
 

@@ -36,6 +36,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -497,14 +498,20 @@ private fun SettingsMenuCard(
     onClick: () -> Unit,
     trailingIcon: ImageVector = Icons.Rounded.ChevronRight
 ) {
-    PremiumCard(
-        modifier = Modifier.clickable(onClick = onClick)
-    ) {
+    PremiumCard(modifier = Modifier.clickable(onClick = onClick)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.primaryContainer) {
+                Text(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    text = title.firstOrNull()?.toString().orEmpty(),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                )
+            }
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -530,16 +537,7 @@ private fun balanceStatusText(status: AccountBalanceStatus?): String =
 
 @Composable
 private fun AccountCard(userEmail: String?, isSaving: Boolean, onLogout: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+    PremiumCard {
             Text(text = "Signed in", style = MaterialTheme.typography.titleMedium)
             Text(
                 text = userEmail ?: "Niqdah account",
@@ -547,20 +545,13 @@ private fun AccountCard(userEmail: String?, isSaving: Boolean, onLogout: () -> U
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Button(
+            SecondaryActionButton(
                 modifier = Modifier.fillMaxWidth(),
+                label = "Log out",
+                icon = Icons.AutoMirrored.Rounded.Logout,
                 enabled = !isSaving,
-                shape = MaterialTheme.shapes.medium,
                 onClick = onLogout
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.Logout,
-                    contentDescription = null,
-                    modifier = Modifier.padding(end = 8.dp)
-                )
-                Text("Log out")
-            }
-        }
+            )
     }
 }
 
@@ -589,16 +580,7 @@ private fun SetupChecklistCard(
             )
     )
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+    PremiumCard {
             Text(text = "Setup checklist", style = MaterialTheme.typography.titleMedium)
             rows.forEach { (label, isComplete) ->
                 Row(
@@ -631,7 +613,6 @@ private fun SetupChecklistCard(
                     )
                 }
             }
-        }
     }
 }
 

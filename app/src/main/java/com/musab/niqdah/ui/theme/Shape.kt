@@ -9,5 +9,5 @@ val NiqdahShapes = Shapes(
     small = RoundedCornerShape(6.dp),
     medium = RoundedCornerShape(8.dp),
     large = RoundedCornerShape(8.dp),
-    extraLarge = RoundedCornerShape(8.dp)
+    extraLarge = RoundedCornerShape(12.dp)
 )

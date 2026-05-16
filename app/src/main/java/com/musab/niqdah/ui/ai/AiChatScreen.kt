@@ -57,6 +57,10 @@ import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.ui.finance.ErrorBanner
 import com.musab.niqdah.ui.finance.FinanceHeader
 import com.musab.niqdah.ui.finance.FinanceUiState
+import com.musab.niqdah.ui.finance.PremiumCard
+import com.musab.niqdah.ui.finance.PrimaryActionButton
+import com.musab.niqdah.ui.finance.SecondaryActionButton
+import com.musab.niqdah.ui.finance.StatusPill
 import com.musab.niqdah.ui.finance.formatInputMoney
 import com.musab.niqdah.ui.finance.formatMoney
 
@@ -142,7 +146,7 @@ fun AiChatScreen(
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 2.dp
+            tonalElevation = 6.dp
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
@@ -192,7 +196,7 @@ private fun SuggestedPrompts(enabled: Boolean, onPrompt: (String) -> Unit) {
         "Summarize my spending",
         "Am I on track?"
     )
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    PremiumCard {
         Text(
             text = "Suggested prompts",
             style = MaterialTheme.typography.labelLarge,
@@ -231,17 +235,15 @@ private fun AiFinanceDraftCard(
 ) {
     var isEditing by remember { mutableStateOf(false) }
 
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(text = "Draft financial action", style = MaterialTheme.typography.titleMedium)
+    PremiumCard(modifier = Modifier.padding(top = 8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(text = "Draft financial action", style = MaterialTheme.typography.titleMedium)
+                StatusPill(text = draftAction.confidence.label, isWarning = draftAction.confidence.name != "HIGH")
+            }
             DraftLine(label = "Type", value = draftAction.type.label)
             DraftLine(
                 label = "Amount",
@@ -251,7 +253,6 @@ private fun AiFinanceDraftCard(
             DraftLine(label = "Necessity", value = draftAction.necessity.label)
             DraftLine(label = "Description", value = draftAction.description.ifBlank { "Imported bank message" })
             DraftLine(label = "Date", value = draftAction.dateInput)
-            DraftLine(label = "Confidence", value = draftAction.confidence.label)
 
             if (isSaved) {
                 Text(
@@ -268,25 +269,22 @@ private fun AiFinanceDraftCard(
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
+                    PrimaryActionButton(
                         modifier = Modifier.weight(1f),
+                        label = if (isSaving) "Saving..." else "Save",
                         enabled = !isSaving,
                         onClick = { onSave(messageId, draftAction) }
-                    ) {
-                        Text(if (isSaving) "Saving..." else "Save")
-                    }
-                    OutlinedButton(
+                    )
+                    SecondaryActionButton(
                         modifier = Modifier.weight(1f),
+                        label = "Edit",
                         onClick = { isEditing = true }
-                    ) {
-                        Text("Edit")
-                    }
+                    )
                     TextButton(onClick = { onCancel(messageId) }) {
                         Text("Cancel")
                     }
                 }
             }
-        }
     }
 
     if (isEditing) {
@@ -461,14 +459,14 @@ private fun ChatBubble(message: AiChatMessage) {
     ) {
         Surface(
             modifier = Modifier.widthIn(max = 320.dp),
-            shape = MaterialTheme.shapes.medium,
+            shape = if (isUser) MaterialTheme.shapes.extraLarge else MaterialTheme.shapes.large,
             color = if (isUser) {
                 MaterialTheme.colorScheme.primary
             } else {
-                MaterialTheme.colorScheme.surface
+                MaterialTheme.colorScheme.surfaceContainer
             },
             tonalElevation = if (isUser) 0.dp else 1.dp,
-            shadowElevation = if (isUser) 0.dp else 1.dp
+            shadowElevation = if (isUser) 0.dp else 2.dp
         ) {
             Text(
                 modifier = Modifier.padding(14.dp),

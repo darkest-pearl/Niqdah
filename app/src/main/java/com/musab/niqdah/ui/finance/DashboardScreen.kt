@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AccountBalanceWallet
+import androidx.compose.material.icons.rounded.Savings
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -28,6 +30,7 @@ import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.DisciplineStatus
 import com.musab.niqdah.domain.finance.FinanceDates
 import com.musab.niqdah.domain.finance.NecessaryItemDue
+import com.musab.niqdah.domain.finance.minorUnitsToMajor
 import java.time.LocalDate
 
 @Composable
@@ -64,17 +67,21 @@ fun DashboardScreen(
                 PlanSummaryCard(uiState = uiState)
             }
             item {
-                FinanceProgressCard(
+                AccountBalanceProgressSection(uiState = uiState)
+            }
+            item {
+                GoalProgressCard(
                     title = primaryGoal?.name ?: "Savings goal",
-                    value = formatProgress(dashboard.primaryGoalProgress),
+                    saved = primaryGoal?.let { formatMoney(it.savedAmount, currency) } ?: formatMoney(0.0, currency),
+                    target = primaryGoal?.let { formatMoney(it.targetAmount, currency) } ?: formatMoney(0.0, currency),
                     progress = dashboard.primaryGoalProgress,
                     subtitle = primaryGoal?.let {
-                        "${formatMoney(it.savedAmount, currency)} saved of ${formatMoney(it.targetAmount, currency)}."
+                        "Primary goal contribution progress. ${dashboard.disciplineStatus.januaryCountdown.daysRemaining} days remain in the current target countdown."
                     } ?: "Create a primary goal in onboarding or settings to track progress here."
                 )
             }
             item {
-                FinanceMetricCard(
+                MetricCard(
                     title = "Safe to spend",
                     value = formatMoney(dashboard.remainingSafeToSpend, currency),
                     subtitle = "After spending, fixed reserves, savings target, and debt reduction."
@@ -87,15 +94,6 @@ fun DashboardScreen(
                         body = "Salary has not been recorded yet. Record it manually or wait for bank SMS."
                     )
                 }
-            }
-            item {
-                SectionHeader(
-                    title = "Account balances",
-                    subtitle = "Confirmed when SMS or manual balance includes the actual account balance."
-                )
-            }
-            item {
-                AccountBalancesCard(uiState = uiState)
             }
             item {
                 DisciplineCard(
@@ -132,6 +130,12 @@ fun DashboardScreen(
                 RecentActivityCard(uiState = uiState)
             }
             item {
+                InsightCard(
+                    title = "Ask Niqdah what to focus on this month",
+                    body = "Use AI Chat for a focused spending check, goal pace review, or purchase decision based on the numbers already in your plan."
+                )
+            }
+            item {
                 NecessaryRemindersCard(disciplineStatus = dashboard.disciplineStatus)
             }
             item {
@@ -162,8 +166,14 @@ private fun PlanSummaryCard(uiState: FinanceUiState) {
     val dashboard = uiState.dashboard
     PremiumCard(containerColor = MaterialTheme.colorScheme.primaryContainer) {
         Text(
-            text = "This month",
+            text = "Financial command center",
             style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer
+        )
+        Text(
+            text = "Good ${dayPartGreeting()}",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
         Text(
@@ -183,12 +193,20 @@ private fun PlanSummaryCard(uiState: FinanceUiState) {
 }
 
 @Composable
-private fun AccountBalancesCard(uiState: FinanceUiState) {
-    PremiumCard {
-        BalanceStatusRow(label = "Daily-use", status = uiState.data.latestDailyUseBalanceStatus)
-        BalanceStatusRow(label = "Savings", status = uiState.data.latestSavingsBalanceStatus)
+private fun AccountBalanceProgressSection(uiState: FinanceUiState) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        DailyUseBalanceProgressCard(uiState = uiState)
+        SavingsBalanceProgressCard(uiState = uiState)
     }
 }
+
+private fun dayPartGreeting(): String =
+    when (java.time.LocalTime.now().hour) {
+        in 5..11 -> "morning"
+        in 12..16 -> "afternoon"
+        in 17..21 -> "evening"
+        else -> "night"
+    }
 
 private fun FinanceUiState.shouldShowSalaryReminder(): Boolean {
     if (data.profile.salary <= 0.0 && data.profile.salaryMinor <= 0L) return false
@@ -202,59 +220,93 @@ private fun FinanceUiState.shouldShowSalaryReminder(): Boolean {
 }
 
 @Composable
-private fun BalanceStatusRow(label: String, status: AccountBalanceStatus?) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(text = label, style = MaterialTheme.typography.titleMedium)
-            status?.let {
-                StatusPill(
-                    text = it.confidence.label,
-                    isWarning = it.confidence != AccountBalanceConfidence.CONFIRMED
-                )
-            }
-        }
-        Text(
-            text = status?.let { formatMoneyMinor(it.amountMinor, it.currency) } ?: "Not known yet",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold
+private fun DailyUseBalanceProgressCard(uiState: FinanceUiState) {
+    val status = uiState.data.latestDailyUseBalanceStatus
+    val currency = status?.currency ?: uiState.data.profile.currency
+    val safePool = uiState.dashboard.remainingSafeToSpend.coerceAtLeast(0.0)
+    val balance = status?.let { minorUnitsToMajor(it.amountMinor) }
+    val progress = if (balance != null && safePool > 0.0) balance / safePool else null
+    val progressLabel = progress?.let { formatProgress(it) } ?: "N/A"
+    val supportLines = when {
+        status == null -> listOf("Confirm with bank SMS or manual balance update.")
+        safePool > 0.0 && progress != null -> listOf(
+            "${formatProgress(progress)} of safe spending available.",
+            "${formatMoney(safePool, currency)} remaining from monthly spendable pool."
         )
-        Text(
-            text = status?.let {
-                "Last update ${formatTransactionDateTime(it.lastUpdatedMillis)} from ${it.source.label}. ${it.note}"
-            } ?: "Niqdah shows this after a bank SMS or manual balance confirmation.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodyMedium
+        else -> listOf(
+            "Safe spending pool is not available yet.",
+            "Confirm income, savings target, and current balance to activate the ring."
         )
-        if (status?.confidence == AccountBalanceConfidence.ESTIMATED) {
-            Text(
-                text = "Estimated balance. Confirm with next bank SMS or manual update.",
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-    }
+    } + status.lastUpdatedLine()
+
+    BalanceProgressCard(
+        title = "Daily-use balance",
+        amountText = status?.let { formatMoneyMinor(it.amountMinor, it.currency) } ?: "Balance not confirmed yet",
+        progress = progress,
+        progressLabel = progressLabel,
+        statusText = status.statusLabel(),
+        supportingLines = supportLines,
+        actionText = "View ledger",
+        icon = Icons.Rounded.AccountBalanceWallet,
+        isWarning = status?.confidence != AccountBalanceConfidence.CONFIRMED
+    )
 }
+
+@Composable
+private fun SavingsBalanceProgressCard(uiState: FinanceUiState) {
+    val status = uiState.data.latestSavingsBalanceStatus
+    val primaryGoal = uiState.data.primaryGoal
+    val currency = status?.currency ?: uiState.data.profile.currency
+    val target = primaryGoal?.targetAmount?.takeIf { it > 0.0 }
+    val goalSaved = primaryGoal?.savedAmount ?: 0.0
+    val savingsBalance = status?.let { minorUnitsToMajor(it.amountMinor) }
+    val progressNumerator = savingsBalance ?: goalSaved.takeIf { it > 0.0 }
+    val progress = if (progressNumerator != null && target != null) progressNumerator / target else null
+    val goalProgress = if (target != null) goalSaved / target else null
+    val supportLines = buildList {
+        when {
+            status == null -> add("Confirm with bank SMS or manual balance update.")
+            target != null -> add("${formatMoney(savingsBalance ?: 0.0, currency)} actual savings balance against ${formatMoney(target, currency)} target.")
+            else -> add("Set a primary goal target to activate the savings ring.")
+        }
+        if (target != null) {
+            add("Goal contributions: ${formatMoney(goalSaved, currency)} of ${formatMoney(target, currency)} saved (${formatProgress(goalProgress ?: 0.0)}).")
+        }
+        val countdown = uiState.dashboard.disciplineStatus.januaryCountdown
+        if (target != null && countdown.daysRemaining >= 0) {
+            add("${countdown.daysRemaining} days left in the current target countdown.")
+        }
+        addAll(status.lastUpdatedLine())
+    }
+
+    BalanceProgressCard(
+        title = "Savings balance",
+        amountText = status?.let { formatMoneyMinor(it.amountMinor, it.currency) } ?: "Balance not confirmed yet",
+        progress = progress,
+        progressLabel = progress?.let { formatProgress(it) } ?: "N/A",
+        statusText = status.statusLabel(),
+        supportingLines = supportLines,
+        actionText = "View goal",
+        icon = Icons.Rounded.Savings,
+        isWarning = status?.confidence != AccountBalanceConfidence.CONFIRMED
+    )
+}
+
+private fun AccountBalanceStatus?.statusLabel(): String =
+    this?.confidence?.label ?: AccountBalanceConfidence.NEEDS_REVIEW.label
+
+private fun AccountBalanceStatus?.lastUpdatedLine(): List<String> =
+    this?.takeIf { it.lastUpdatedMillis > 0L }?.let {
+        listOf("Last updated ${formatTransactionDateTime(it.lastUpdatedMillis)} from ${it.source.label}.")
+    } ?: emptyList()
 
 @Composable
 private fun DisciplineCard(
     disciplineStatus: DisciplineStatus,
     currency: String
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Text(text = "Discipline", style = MaterialTheme.typography.titleMedium)
+    PremiumCard {
+            Text(text = "Monthly discipline status", style = MaterialTheme.typography.titleMedium)
             DisciplineLine(
                 label = "Savings target",
                 value = "${formatMoney(disciplineStatus.savingsTarget.savedThisMonth, currency)} of ${
@@ -283,7 +335,6 @@ private fun DisciplineCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium
             )
-        }
     }
 }
 
@@ -321,7 +372,7 @@ private fun RecentActivityCard(uiState: FinanceUiState) {
     PremiumCard {
         SectionHeader(title = "Recent activity")
         recent.forEach { item ->
-            Text(text = item.first, style = MaterialTheme.typography.bodyMedium)
+            Text(text = item.first, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -387,14 +438,8 @@ private fun dueSummary(items: List<NecessaryItemDue>): String =
 
 @Composable
 private fun HealthSummaryCard(summary: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
+    PremiumCard(containerColor = MaterialTheme.colorScheme.primaryContainer) {
         Text(
-            modifier = Modifier.padding(16.dp),
             text = summary,
             color = MaterialTheme.colorScheme.onPrimaryContainer,
             style = MaterialTheme.typography.bodyLarge
