@@ -4,6 +4,7 @@ import com.musab.niqdah.domain.finance.AccountBalanceStatus
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.CategorySpendingBreakdown
 import com.musab.niqdah.domain.finance.CategoryType
+import com.musab.niqdah.domain.finance.CashProtectionCalculator
 import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.DisciplineCalculator
 import com.musab.niqdah.domain.finance.ExpenseTransaction
@@ -11,9 +12,14 @@ import com.musab.niqdah.domain.finance.FinanceCalculator
 import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.NecessaryItemDue
+import com.musab.niqdah.domain.finance.ProtectedCashObligation
+import com.musab.niqdah.domain.finance.ProtectedCashObligationCalculator
+import com.musab.niqdah.domain.finance.SalaryCycleRules
 import com.musab.niqdah.domain.finance.SavingsGoal
+import com.musab.niqdah.domain.finance.SavingsFollowUpReminderRules
 import com.musab.niqdah.domain.finance.effectiveMinorUnits
 import com.musab.niqdah.domain.finance.formatMinorUnits
+import java.time.LocalDate
 
 object AiFinanceContextPayloadMapper {
     fun toPayload(context: AiFinanceContext): Map<String, Any?> {
@@ -23,15 +29,20 @@ object AiFinanceContextPayloadMapper {
             data = data,
             yearMonth = context.currentMonthSnapshot.yearMonth
         )
+        val yearMonth = context.currentMonthSnapshot.yearMonth
         val disciplineStatus = DisciplineCalculator.status(
             data = data,
-            yearMonth = context.currentMonthSnapshot.yearMonth
+            yearMonth = yearMonth
         )
+        val activeSalaryCycle = SalaryCycleRules.activeCycle(data, yearMonth)
+        val cashProtection = CashProtectionCalculator.evaluate(data, yearMonth)
+        val savingsFollowUp = SavingsFollowUpReminderRules.evaluate(data, yearMonth, LocalDate.now())
+        val protectedObligations = ProtectedCashObligationCalculator.obligations(data, yearMonth)
         val monthDeposits = data.incomeTransactions
-            .filter { it.yearMonth == context.currentMonthSnapshot.yearMonth }
+            .filter { it.yearMonth == yearMonth }
         val salaryDeposits = monthDeposits.filter { it.depositType == DepositType.SALARY }
         val monthTransactions = data.transactions
-            .filter { it.yearMonth == context.currentMonthSnapshot.yearMonth }
+            .filter { it.yearMonth == yearMonth }
         val savingsContributions = monthTransactions
             .filter { categoryById[it.categoryId]?.type == CategoryType.SAVINGS }
         val debtPayments = monthTransactions
@@ -66,7 +77,7 @@ object AiFinanceContextPayloadMapper {
                 "paymentsThisMonth" to debtPayments.sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
             ),
             "currentMonthSnapshot" to mapOf(
-                "yearMonth" to context.currentMonthSnapshot.yearMonth,
+                "yearMonth" to yearMonth,
                 "totalIncome" to context.currentMonthSnapshot.totalIncome,
                 "totalExpenseSpending" to dashboard.totalSpent,
                 "remainingSafeToSpend" to context.currentMonthSnapshot.remainingSafeToSpend,
@@ -109,6 +120,46 @@ object AiFinanceContextPayloadMapper {
                     "currentSaved" to disciplineStatus.januaryCountdown.currentSaved,
                     "targetAmount" to disciplineStatus.januaryCountdown.targetAmount,
                     "requiredMonthlySavings" to disciplineStatus.januaryCountdown.requiredMonthlySavings
+                )
+            ),
+            "cashProtection" to mapOf(
+                "salaryCycle" to activeSalaryCycle?.let {
+                    mapOf(
+                        "cycleMonth" to it.cycleMonth,
+                        "salaryDepositAmount" to formatMinorUnits(
+                            it.salaryDepositAmountMinor,
+                            it.currency
+                        ),
+                        "openingBalanceConfirmed" to it.isOpeningBalanceConfirmed,
+                        "openingDailyUseBalance" to it.openingDailyUseBalanceMinor?.let { balance ->
+                            formatMinorUnits(balance, it.currency)
+                        },
+                        "source" to it.source.name,
+                        "salaryDepositDateMillis" to it.salaryDepositDateMillis
+                    )
+                },
+                "riskLevel" to cashProtection.riskLevel.name,
+                "riskLabel" to cashProtection.riskLevel.label,
+                "message" to cashProtection.message,
+                "unpaidProtectedObligationsTotal" to formatMinorUnits(
+                    cashProtection.protectedUnpaidObligationsMinor,
+                    data.profile.currency
+                ),
+                "flexibleBufferRemaining" to formatMinorUnits(
+                    cashProtection.flexibleBufferLeftMinor,
+                    data.profile.currency
+                ),
+                "unpaidProtectedObligations" to protectedObligations
+                    .filter { it.isProtected }
+                    .map { it.toPayload(data.profile.currency) },
+                "savingsTransferFollowUp" to mapOf(
+                    "state" to savingsFollowUp.state.name,
+                    "shouldNotify" to savingsFollowUp.shouldNotify,
+                    "remainingSavingsTarget" to formatMinorUnits(
+                        savingsFollowUp.remainingSavingsTargetMinor,
+                        data.profile.currency
+                    ),
+                    "nextEligibleReminderMillis" to savingsFollowUp.nextEligibleReminderMillis
                 )
             ),
             "recentExpenses" to expenses
@@ -199,6 +250,17 @@ object AiFinanceContextPayloadMapper {
             "daysUntilDue" to daysUntilDue,
             "recurrence" to item.recurrence.label,
             "status" to item.status.label
+        )
+
+    private fun ProtectedCashObligation.toPayload(currency: String): Map<String, Any?> =
+        mapOf(
+            "title" to title,
+            "type" to type.name,
+            "status" to status.name,
+            "amount" to formatMinorUnits(amountMinor, currency),
+            "remainingAmount" to formatMinorUnits(remainingAmountMinor, currency),
+            "dueDateMillis" to dueDateMillis,
+            "dueDayOfMonth" to dueDayOfMonth
         )
 
     private fun AccountBalanceStatus.toPayload(): Map<String, Any> =

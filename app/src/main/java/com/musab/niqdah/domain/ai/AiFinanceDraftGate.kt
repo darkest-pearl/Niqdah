@@ -13,7 +13,7 @@ object AiFinanceDraftGate {
         if (hasExplicitRecordIntent(text)) return true
         if (parsed.type == ParsedBankMessageType.UNKNOWN) return false
 
-        return hasCurrencyAmount(text) && hasStrongTransactionSignal(text)
+        return hasCurrencyAmount(text) && hasRecognizedBankSmsPattern(text)
     }
 
     fun draftTypeFor(rawText: String, parsed: ParsedBankMessage): ParsedBankMessageType {
@@ -30,6 +30,8 @@ object AiFinanceDraftGate {
 
     private fun hasExplicitRecordIntent(text: String): Boolean =
         Regex("""\b(log|record)\b""").containsMatchIn(text) ||
+            Regex("""\bsave\s+this\b""").containsMatchIn(text) ||
+            Regex("""\bimport\s+this\s+sms\b""").containsMatchIn(text) ||
             Regex("""\badd\s+(?:a\s+|this\s+)?(transaction|expense|income|deposit|transfer|purchase)\b""")
                 .containsMatchIn(text) ||
             Regex("""\bsave\s+(?:this\s+)?(transaction|expense|income|deposit|transfer|purchase)\b""")
@@ -41,8 +43,9 @@ object AiFinanceDraftGate {
             Regex("""\b(?:[0-9][0-9,]*(?:\.\d{1,2})?|\.\d{1,2})\s*(aed|dhs|dirhams?|usd|sar|eur|gbp)\b""")
                 .containsMatchIn(text)
 
-    private fun hasStrongTransactionSignal(text: String): Boolean =
-        text.containsAny(debitSignals + creditSignals + savingsSignals + transferOutSignals + bankPatternSignals)
+    private fun hasRecognizedBankSmsPattern(text: String): Boolean =
+        text.containsAny(debitSignals + creditSignals + savingsSignals + transferOutSignals) &&
+            text.containsAny(bankPatternSignals)
 
     private fun String.compact(): String =
         trim().replace(Regex("""\s+"""), " ").lowercase(Locale.US)
@@ -93,6 +96,8 @@ object AiFinanceDraftGate {
     private val bankPatternSignals = listOf(
         "account no",
         "ac no",
+        "card ending",
+        "debit card",
         "available balance",
         "avl bal",
         "current balance"

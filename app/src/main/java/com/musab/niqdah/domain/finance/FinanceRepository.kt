@@ -19,6 +19,7 @@ interface FinanceRepository {
     suspend fun upsertAccountBalanceSnapshot(snapshot: AccountBalanceSnapshot)
     suspend fun upsertAccountLedgerEntry(entry: AccountLedgerEntry)
     suspend fun upsertInternalTransferRecord(record: InternalTransferRecord)
+    suspend fun upsertSalaryCycle(cycle: SalaryCycle)
     suspend fun upsertMerchantRule(rule: MerchantRule)
     suspend fun upsertGoal(goal: SavingsGoal)
     suspend fun upsertDebt(debt: DebtTracker)

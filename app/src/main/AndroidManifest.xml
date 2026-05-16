@@ -25,6 +25,9 @@
         <receiver
             android:name=".data.finance.BankSmsNotificationActionReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".data.finance.SavingsFollowUpNotificationActionReceiver"
+            android:exported="false" />
 
         <activity
             android:name=".MainActivity"

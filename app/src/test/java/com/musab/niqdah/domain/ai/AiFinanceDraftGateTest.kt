@@ -32,8 +32,30 @@ class AiFinanceDraftGateTest {
     }
 
     @Test
+    fun adviceQuestionsWithAmountsCreateNoDrafts() {
+        listOf(
+            "Should I save more?",
+            "How am I doing this month?",
+            "What should I focus on?",
+            "Can I afford this?",
+            "Can I afford AED 75 dinner tonight?"
+        ).forEach { message ->
+            assertFalse(message, AiFinanceDraftGate.shouldCreateDraft(message, parse(message)))
+        }
+    }
+
+    @Test
     fun explicitLogRequestCreatesExpenseDraft() {
         val message = "Log AED 20 burger"
+        val parsed = parse(message)
+
+        assertTrue(AiFinanceDraftGate.shouldCreateDraft(message, parsed))
+        assertEquals(ParsedBankMessageType.EXPENSE, AiFinanceDraftGate.draftTypeFor(message, parsed))
+    }
+
+    @Test
+    fun explicitSaveThisRequestCreatesDraft() {
+        val message = "Save this AED 20 burger"
         val parsed = parse(message)
 
         assertTrue(AiFinanceDraftGate.shouldCreateDraft(message, parsed))

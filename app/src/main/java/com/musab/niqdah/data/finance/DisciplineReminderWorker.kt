@@ -27,8 +27,15 @@ import com.musab.niqdah.domain.finance.NecessaryItemRecurrence
 import com.musab.niqdah.domain.finance.NecessaryItemStatus
 import com.musab.niqdah.domain.finance.PendingBankImport
 import com.musab.niqdah.domain.finance.ReminderSettings
+import com.musab.niqdah.domain.finance.SalaryCycle
+import com.musab.niqdah.domain.finance.SalaryCycleSource
+import com.musab.niqdah.domain.finance.SalaryCycleRules
 import com.musab.niqdah.domain.finance.SavingsGoal
+import com.musab.niqdah.domain.finance.SavingsFollowUpReminderRules
 import com.musab.niqdah.domain.finance.UserProfile
+import com.musab.niqdah.domain.finance.effectiveMinorUnits
+import com.musab.niqdah.domain.finance.formatMinorUnits
+import com.musab.niqdah.domain.finance.majorToMinorUnits
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.time.Instant
 import java.time.LocalDate
@@ -56,6 +63,8 @@ class DisciplineReminderWorker(
             TYPE_MISSED_SAVINGS -> handleMissedSavings(data, today, yearMonth)
             TYPE_OVERSPENDING -> handleOverspending(data, yearMonth)
             TYPE_NECESSARY_ITEMS -> handleNecessaryItems(data, today)
+            TYPE_POST_SALARY_SAVINGS_FOLLOW_UP ->
+                handlePostSalarySavingsFollowUp(data, today, yearMonth, db, uid)
         }
         return Result.success()
     }
@@ -143,6 +152,47 @@ class DisciplineReminderWorker(
         }
     }
 
+    private suspend fun handlePostSalarySavingsFollowUp(
+        data: FinanceData,
+        today: LocalDate,
+        yearMonth: String,
+        db: FirebaseFirestore,
+        uid: String
+    ) {
+        val status = SavingsFollowUpReminderRules.evaluate(data, yearMonth, today)
+        if (!status.shouldNotify) return
+        val cycle = SalaryCycleRules.activeCycle(data, yearMonth) ?: return
+        val key = "post-salary-savings-$yearMonth-${today}"
+        val goalName = data.primaryGoal?.name ?: "your savings goal"
+        val text = "Salary received. Remember to move ${
+            formatMinorUnits(status.remainingSavingsTargetMinor, data.profile.currency)
+        } to $goalName."
+        DisciplineNotificationPublisher.show(
+            context = applicationContext,
+            notificationId = key.hashCode(),
+            title = "Savings follow-up",
+            text = text,
+            actions = SavingsFollowUpNotificationActionReceiver.actions(
+                context = applicationContext,
+                uid = uid,
+                cycleMonth = yearMonth,
+                remainingAmountMinor = status.remainingSavingsTargetMinor,
+                currency = data.profile.currency,
+                notificationId = key.hashCode()
+            )
+        )
+        userDocument(db, uid)
+            .collection(FirestoreCollections.SALARY_CYCLES)
+            .document(cycle.id)
+            .update(
+                mapOf(
+                    "lastSavingsFollowUpReminderAtMillis" to System.currentTimeMillis(),
+                    "updatedAtMillis" to System.currentTimeMillis()
+                )
+            )
+            .awaitValue()
+    }
+
     private fun alreadyNotified(key: String): Boolean {
         val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val scopedKey = "${inputData.getString(KEY_UID).orEmpty()}:$key"
@@ -188,6 +238,11 @@ class DisciplineReminderWorker(
             .documents
             .map { it.toNecessaryItem() }
             .ifEmpty { FinanceDefaults.necessaryItems() }
+        val salaryCycles = userDocument.collection(FirestoreCollections.SALARY_CYCLES)
+            .get()
+            .awaitValue()
+            .documents
+            .map { it.toSalaryCycle(uid) }
 
         return FinanceData(
             profile = profile,
@@ -195,6 +250,7 @@ class DisciplineReminderWorker(
             categories = categories,
             transactions = transactions,
             incomeTransactions = incomeTransactions,
+            salaryCycles = salaryCycles,
             pendingBankImports = emptyList<PendingBankImport>(),
             accountBalanceSnapshots = emptyList<AccountBalanceSnapshot>(),
             internalTransferRecords = emptyList<InternalTransferRecord>(),
@@ -320,7 +376,24 @@ class DisciplineReminderWorker(
                 ?: defaults.isAvoidCategoryWarningEnabled,
             januaryTargetDate = getString("januaryTargetDate") ?: defaults.januaryTargetDate,
             januaryFundTargetAmount = double("januaryFundTargetAmount", defaults.januaryFundTargetAmount),
-            updatedAtMillis = long("updatedAtMillis", defaults.updatedAtMillis)
+            updatedAtMillis = long("updatedAtMillis", defaults.updatedAtMillis),
+            monthlySavingsTargetAmountMinor = long(
+                "monthlySavingsTargetAmountMinor",
+                majorToMinorUnits(double("monthlySavingsTargetAmount", defaults.monthlySavingsTargetAmount))
+            ),
+            januaryFundTargetAmountMinor = long(
+                "januaryFundTargetAmountMinor",
+                majorToMinorUnits(double("januaryFundTargetAmount", defaults.januaryFundTargetAmount))
+            ),
+            isPostSalarySavingsFollowUpEnabled = getBoolean("isPostSalarySavingsFollowUpEnabled")
+                ?: defaults.isPostSalarySavingsFollowUpEnabled,
+            postSalarySavingsFollowUpIntervalDays = int(
+                "postSalarySavingsFollowUpIntervalDays",
+                defaults.postSalarySavingsFollowUpIntervalDays
+            ).coerceIn(1, 31),
+            suppressedPostSalarySavingsFollowUpCycleMonth =
+                getString("suppressedPostSalarySavingsFollowUpCycleMonth")
+                    ?: defaults.suppressedPostSalarySavingsFollowUpCycleMonth
         )
     }
 
@@ -340,11 +413,36 @@ class DisciplineReminderWorker(
             updatedAtMillis = long("updatedAtMillis")
         )
 
+    private fun DocumentSnapshot.toSalaryCycle(uid: String): SalaryCycle =
+        SalaryCycle(
+            id = id,
+            userId = getString("userId") ?: uid,
+            cycleMonth = getString("cycleMonth") ?: id.removePrefix("salary-cycle-"),
+            salaryDepositAmountMinor = long("salaryDepositAmountMinor"),
+            openingDailyUseBalanceMinor = nullableLong("openingDailyUseBalanceMinor"),
+            salaryDepositDateMillis = long("salaryDepositDateMillis"),
+            currency = getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
+            source = SalaryCycleSource.entries.firstOrNull { it.name == getString("source") }
+                ?: SalaryCycleSource.MANUAL,
+            isOpeningBalanceConfirmed = getBoolean("isOpeningBalanceConfirmed")
+                ?: (nullableLong("openingDailyUseBalanceMinor") != null),
+            isActive = getBoolean("isActive") ?: true,
+            createdAtMillis = long("createdAtMillis"),
+            updatedAtMillis = long("updatedAtMillis"),
+            lastSavingsFollowUpReminderAtMillis = long("lastSavingsFollowUpReminderAtMillis")
+        )
+
+    private fun userDocument(db: FirebaseFirestore, uid: String) =
+        db.collection(FirestoreCollections.USERS).document(uid)
+
     private fun DocumentSnapshot.double(field: String, default: Double = 0.0): Double =
         (get(field) as? Number)?.toDouble() ?: default
 
     private fun DocumentSnapshot.nullableDouble(field: String): Double? =
         (get(field) as? Number)?.toDouble()
+
+    private fun DocumentSnapshot.nullableLong(field: String): Long? =
+        (get(field) as? Number)?.toLong()
 
     private fun DocumentSnapshot.long(field: String, default: Long = 0L): Long =
         (get(field) as? Number)?.toLong() ?: default
@@ -380,6 +478,7 @@ class DisciplineReminderWorker(
         const val TYPE_MISSED_SAVINGS = "missedSavings"
         const val TYPE_OVERSPENDING = "overspending"
         const val TYPE_NECESSARY_ITEMS = "necessaryItems"
+        const val TYPE_POST_SALARY_SAVINGS_FOLLOW_UP = "postSalarySavingsFollowUp"
         private const val PREFS_NAME = "discipline_notification_history"
 
         fun workName(uid: String, type: String): String = "discipline-$uid-$type"

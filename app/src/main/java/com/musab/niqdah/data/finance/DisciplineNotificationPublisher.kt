@@ -13,7 +13,13 @@ import com.musab.niqdah.MainActivity
 import com.musab.niqdah.R
 
 internal object DisciplineNotificationPublisher {
-    fun show(context: Context, notificationId: Int, title: String, text: String) {
+    fun show(
+        context: Context,
+        notificationId: Int,
+        title: String,
+        text: String,
+        actions: List<DisciplineNotificationAction> = emptyList()
+    ) {
         val appContext = context.applicationContext
         if (!appContext.canPostNotifications()) return
         val notificationManager = appContext.getSystemService(NotificationManager::class.java)
@@ -28,16 +34,25 @@ internal object DisciplineNotificationPublisher {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = Notification.Builder(appContext, channelId)
+        val builder = Notification.Builder(appContext, channelId)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setContentIntent(intent)
             .setAutoCancel(true)
-            .build()
 
-        notificationManager.notify(notificationId, notification)
+        actions.forEach { action ->
+            builder.addAction(
+                Notification.Action.Builder(
+                    action.iconResId,
+                    action.title,
+                    action.intent
+                ).build()
+            )
+        }
+
+        notificationManager.notify(notificationId, builder.build())
     }
 
     private fun Context.canPostNotifications(): Boolean =
@@ -47,3 +62,9 @@ internal object DisciplineNotificationPublisher {
                 Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
 }
+
+internal data class DisciplineNotificationAction(
+    val title: String,
+    val intent: PendingIntent,
+    val iconResId: Int = R.drawable.ic_launcher_foreground
+)

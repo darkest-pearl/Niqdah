@@ -64,7 +64,8 @@ class BankMessageParser {
             availableBalanceMinor = parsed.availableBalanceMinor,
             originalForeignAmountMinor = parsed.originalForeignAmountMinor,
             inferredAccountDebitMinor = parsed.inferredAccountDebitMinor,
-            depositType = parsed.depositType
+            depositType = parsed.depositType,
+            depositSubtype = parsed.depositSubtype
         )
     }
 
@@ -117,7 +118,8 @@ class BankMessageParser {
         val hasSavingsTransfer = compactMessage.containsAny(savingsKeywords)
         val hasDebit = compactMessage.containsAny(debitKeywords)
         val hasCredit = compactMessage.containsAny(creditKeywords)
-        val depositType = depositTypeFor(compactMessage, isAccountToAccountTransfer)
+        val depositSubtype = depositSubtypeFor(compactMessage, isAccountToAccountTransfer, hasCredit)
+        val depositType = depositSubtype.toLegacyDepositType()
         val parsedType = when {
             informationalReason.isNotBlank() -> ParsedBankMessageType.INFORMATIONAL
             isAccountToAccountTransfer &&
@@ -163,6 +165,13 @@ class BankMessageParser {
             moneyMentions.any { !it.isBalanceLike && it.hasExplicitCurrency }
         val availableBalance = balanceMention?.amount
         val availableBalanceMinor = balanceMention?.amountMinor
+        val saveableAmount = amount.takeUnless { parsedType == ParsedBankMessageType.INFORMATIONAL }
+        val saveableAmountMinor = amountMinor.takeUnless { parsedType == ParsedBankMessageType.INFORMATIONAL }
+        val saveableCurrency = if (parsedType == ParsedBankMessageType.INFORMATIONAL) {
+            FinanceDefaults.DEFAULT_CURRENCY
+        } else {
+            currency
+        }
         val occurredAt = parseDateMillis(rawMessage, nowMillis) ?: nowMillis
         val merchantName = extractMerchant(
             rawMessage = rawMessage,
@@ -196,8 +205,8 @@ class BankMessageParser {
             senderName = senderName,
             sourceType = sourceType,
             type = parsedType,
-            amount = amount,
-            currency = currency,
+            amount = saveableAmount,
+            currency = saveableCurrency,
             availableBalance = availableBalance,
             availableBalanceCurrency = balanceCurrency,
             originalForeignAmount = foreignTransactionAmount?.amount,
@@ -248,11 +257,12 @@ class BankMessageParser {
                     settings.dailyUseAccountSuffix.matchesSuffix(resolvedSourceSuffix) ||
                     settings.dailyUseAccountSuffix.matchesSuffix(resolvedTargetSuffix)
             ),
-            amountMinor = amountMinor,
+            amountMinor = saveableAmountMinor,
             availableBalanceMinor = availableBalanceMinor,
             originalForeignAmountMinor = foreignTransactionAmount?.amountMinor,
             inferredAccountDebitMinor = inference?.amountMinor,
-            depositType = depositType
+            depositType = depositType,
+            depositSubtype = depositSubtype
         )
     }
 
@@ -383,7 +393,20 @@ class BankMessageParser {
         if (mentions.isEmpty()) return null
         val transactionCandidates = mentions.filterNot { it.isBalanceLike }
         if (transactionCandidates.isEmpty()) return null
-        val hints = listOf("amount", "amt", "debited", "credited", "spent", "paid", "purchase", "transfer")
+        val hints = listOf(
+            "amount",
+            "amt",
+            "debited",
+            "credited",
+            "spent",
+            "paid",
+            "purchase",
+            "transfer",
+            "salary",
+            "deposited",
+            "received",
+            "refund"
+        )
         return transactionCandidates.maxByOrNull { mention ->
             var score = 0
             score += 5
@@ -772,14 +795,15 @@ class BankMessageParser {
             .toList()
 
     private fun extractSourceAccountSuffix(rawMessage: String): String =
-        Regex("""(?i)\b(?:from|debited\s+from)\s+(?:your\s+)?(?:mashreq\s+)?(?:account|ac)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\b""")
+        Regex("""(?i)(?:\b(?:from|debited\s+from)\s+(?:your\s+)?(?:mashreq\s+)?(?:account|ac)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\b|\b(?:your\s+)?(?:account|ac)(?:\s+no\.?)?\s*:?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\s+is\s+debited\b)""")
             .find(rawMessage)
             ?.groupValues
-            ?.getOrNull(1)
+            ?.drop(1)
+            ?.firstOrNull { it.isNotBlank() }
             .orEmpty()
 
     private fun extractTargetAccountSuffix(rawMessage: String): String =
-        Regex("""(?i)(?:\b(?:your\s+)?(?:ac|account)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\s+is\s+credited\b|\b(?:deposited|credited)\s+to\s+your\s+(?:ac|account)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\b|\bto\s+your\s+(?:ac|account)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\b)""")
+        Regex("""(?i)(?:\b(?:your\s+)?(?:ac|account)(?:\s+no\.?)?\s*:?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\s+is\s+credited\b|\b(?:deposited|credited)\s+to\s+your\s+(?:ac|account)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\b|\bto\s+(?:your\s+)?(?:ac|account)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\b|\bin\s+(?:your\s+)?(?:ac|account)(?:\s+no\.?)?\s*(?:x{2,}|[*]{2,})?([0-9]{4})\b)""")
             .find(rawMessage)
             ?.groupValues
             ?.drop(1)
@@ -895,15 +919,49 @@ class BankMessageParser {
             BankMessageSourceType.UNKNOWN -> null
         }
 
-    private fun depositTypeFor(compactMessage: String, isAccountToAccountTransfer: Boolean): DepositType =
+    private fun depositSubtypeFor(
+        compactMessage: String,
+        isAccountToAccountTransfer: Boolean,
+        hasCredit: Boolean
+    ): DepositSubtype =
         when {
-            isAccountToAccountTransfer -> DepositType.TRANSFER
-            compactMessage.containsAny(listOf("refund", "reversal", "chargeback", "reversed")) -> DepositType.REFUND
-            compactMessage.containsAny(listOf("monthly salary", "salary", "payroll", "wages", "employer")) ->
-                DepositType.SALARY
-            compactMessage.containsAny(listOf("deposited", "credited", "cash deposit", "transfer received")) ->
-                DepositType.OTHER_INCOME
-            else -> DepositType.OTHER_INCOME
+            isAccountToAccountTransfer && hasCredit -> DepositSubtype.TRANSFER_IN
+            compactMessage.containsAny(listOf("refund", "visa refund", "reversal", "chargeback", "reversed")) ->
+                DepositSubtype.REFUND
+            compactMessage.containsAny(
+                listOf(
+                    "monthly salary",
+                    "received your salary",
+                    "salary has been credited",
+                    "salary credited",
+                    "salary deposited",
+                    "salary has been deposited",
+                    "salary",
+                    "payroll",
+                    "wage",
+                    "wages"
+                )
+            ) -> DepositSubtype.SALARY
+            compactMessage.containsAny(
+                listOf(
+                    "deposited to your account",
+                    "has been deposited",
+                    "cash deposit",
+                    "credited to your account",
+                    "deposited",
+                    "credited"
+                )
+            ) -> DepositSubtype.GENERAL_DEPOSIT
+            else -> DepositSubtype.UNKNOWN_INCOME
+        }
+
+    private fun DepositSubtype.toLegacyDepositType(): DepositType =
+        when (this) {
+            DepositSubtype.SALARY -> DepositType.SALARY
+            DepositSubtype.REFUND -> DepositType.REFUND
+            DepositSubtype.TRANSFER_IN -> DepositType.TRANSFER
+            DepositSubtype.GENERAL_DEPOSIT,
+            DepositSubtype.UNKNOWN_INCOME -> DepositType.OTHER_INCOME
         }
 
     private data class MoneyMention(

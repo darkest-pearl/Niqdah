@@ -13,6 +13,7 @@ import com.musab.niqdah.domain.finance.BankMessageImportStatus
 import com.musab.niqdah.domain.finance.BankMessageParser
 import com.musab.niqdah.domain.finance.BankMessageParserSettings
 import com.musab.niqdah.domain.finance.BankMessageSourceSettings
+import com.musab.niqdah.domain.finance.BankMessageSourceType
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.DashboardMetrics
 import com.musab.niqdah.domain.finance.DebtTracker
@@ -40,6 +41,8 @@ import com.musab.niqdah.domain.finance.PendingBankImport
 import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
 import com.musab.niqdah.domain.finance.ReminderSettings
 import com.musab.niqdah.domain.finance.SaveResult
+import com.musab.niqdah.domain.finance.SalaryCycleRules
+import com.musab.niqdah.domain.finance.SalaryCycleSource
 import com.musab.niqdah.domain.finance.SavingsGoal
 import com.musab.niqdah.domain.finance.effectiveMinorUnits
 import com.musab.niqdah.domain.finance.majorToMinorUnits
@@ -371,6 +374,17 @@ class FinanceViewModel(
                         updatedAtMillis = now
                     )
                 )
+                if (depositType == DepositType.SALARY) {
+                    upsertSalaryCycleForDeposit(
+                        amountMinor = parsedAmountMinor,
+                        currentDailyUseBalanceMinor = currentBalanceAfterMinor
+                            .takeIf { accountKind == AccountKind.DAILY_USE },
+                        currency = currency,
+                        occurredAtMillis = parsedOccurredAt,
+                        source = SalaryCycleSource.MANUAL,
+                        now = now
+                    )
+                }
             }
             financeRepository.upsertAccountLedgerEntry(
                 AccountLedgerRules.manualDepositEntry(
@@ -653,6 +667,13 @@ class FinanceViewModel(
             isInternalTransferReminderEnabled = isInternalTransferReminderEnabled,
             internalTransferReminderThresholdMinutes = internalTransferReminderThresholdMinutes.coerceIn(1, 24 * 60),
             lastIgnoredSender = currentSettings.lastIgnoredSender,
+            lastReceivedSender = currentSettings.lastReceivedSender,
+            lastSenderMatched = currentSettings.lastSenderMatched,
+            lastParsedResult = currentSettings.lastParsedResult,
+            lastCreatedPendingImport = currentSettings.lastCreatedPendingImport,
+            lastDuplicateBlocked = currentSettings.lastDuplicateBlocked,
+            lastDuplicateReason = currentSettings.lastDuplicateReason,
+            lastParserDecisionAtMillis = currentSettings.lastParserDecisionAtMillis,
             lastParsedBankMessageAtMillis = currentSettings.lastParsedBankMessageAtMillis,
             lastIgnoredReason = currentSettings.lastIgnoredReason,
             debitKeywords = keywordListOrDefault(
@@ -685,7 +706,9 @@ class FinanceViewModel(
         areOverspendingWarningsEnabled: Boolean,
         isAvoidCategoryWarningEnabled: Boolean,
         januaryTargetDateInput: String,
-        januaryFundTargetAmountInput: String
+        januaryFundTargetAmountInput: String,
+        isPostSalarySavingsFollowUpEnabled: Boolean,
+        postSalarySavingsFollowUpIntervalDaysInput: String
     ) {
         val monthlySavingsReminderDay = monthlySavingsReminderDayInput.trim().toIntOrNull()
         val monthlySavingsReminderHour = monthlySavingsReminderHourInput.trim().toIntOrNull()
@@ -696,6 +719,8 @@ class FinanceViewModel(
         val missedSavingsReminderMinute = missedSavingsReminderMinuteInput.trim().toIntOrNull()
         val januaryTargetDate = FinanceDates.parseDateInput(januaryTargetDateInput)
         val januaryFundTargetAmount = januaryFundTargetAmountInput.toMoneyOrNull()
+        val postSalarySavingsFollowUpIntervalDays =
+            postSalarySavingsFollowUpIntervalDaysInput.trim().toIntOrNull()
 
         val validationError = when {
             monthlySavingsReminderDay == null || monthlySavingsReminderDay !in 1..31 ->
@@ -715,6 +740,8 @@ class FinanceViewModel(
             januaryTargetDate == null -> "Enter the goal target date as YYYY-MM-DD."
             januaryFundTargetAmount == null || januaryFundTargetAmount < 0.0 ->
                 "Enter a valid goal fund target."
+            postSalarySavingsFollowUpIntervalDays == null || postSalarySavingsFollowUpIntervalDays !in 1..31 ->
+                "Enter a post-salary follow-up interval from 1 to 31 days."
             else -> null
         }
 
@@ -747,7 +774,11 @@ class FinanceViewModel(
             januaryFundTargetAmount = parsedJanuaryFundTargetAmount,
             updatedAtMillis = now,
             monthlySavingsTargetAmountMinor = parsedMonthlySavingsTargetAmountMinor,
-            januaryFundTargetAmountMinor = parsedJanuaryFundTargetAmountMinor
+            januaryFundTargetAmountMinor = parsedJanuaryFundTargetAmountMinor,
+            isPostSalarySavingsFollowUpEnabled = isPostSalarySavingsFollowUpEnabled,
+            postSalarySavingsFollowUpIntervalDays = postSalarySavingsFollowUpIntervalDays ?: return,
+            suppressedPostSalarySavingsFollowUpCycleMonth =
+                current.reminderSettings.suppressedPostSalarySavingsFollowUpCycleMonth
         )
 
         runSave {
@@ -896,6 +927,31 @@ class FinanceViewModel(
         }
     }
 
+    private suspend fun upsertSalaryCycleForDeposit(
+        amountMinor: Long,
+        currentDailyUseBalanceMinor: Long?,
+        currency: String,
+        occurredAtMillis: Long,
+        source: SalaryCycleSource,
+        now: Long
+    ) {
+        val data = _uiState.value.data
+        val uid = data.profile.uid
+        if (uid.isBlank()) return
+        financeRepository.upsertSalaryCycle(
+            SalaryCycleRules.upsertForSalaryDeposit(
+                existingCycles = data.salaryCycles,
+                userId = uid,
+                amountMinor = amountMinor,
+                currentDailyUseBalanceMinor = currentDailyUseBalanceMinor,
+                currency = currency,
+                occurredAtMillis = occurredAtMillis,
+                source = source,
+                nowMillis = now
+            )
+        )
+    }
+
     private suspend fun writeImportedFinanceAction(
         type: ParsedBankMessageType,
         amount: Double,
@@ -906,7 +962,9 @@ class FinanceViewModel(
         occurredAtMillis: Long,
         senderName: String,
         now: Long,
-        depositType: DepositType = DepositType.OTHER_INCOME
+        depositType: DepositType = DepositType.OTHER_INCOME,
+        availableDailyUseBalanceAfterMinor: Long? = null,
+        salaryCycleSource: SalaryCycleSource = SalaryCycleSource.MANUAL
     ): SaveResult {
         val amountMinor = majorToMinorUnits(amount)
         when (type) {
@@ -947,6 +1005,16 @@ class FinanceViewModel(
                         depositType = depositType
                     )
                 )
+                if (depositType == DepositType.SALARY) {
+                    upsertSalaryCycleForDeposit(
+                        amountMinor = amountMinor,
+                        currentDailyUseBalanceMinor = availableDailyUseBalanceAfterMinor,
+                        currency = currency,
+                        occurredAtMillis = occurredAtMillis,
+                        source = salaryCycleSource,
+                        now = now
+                    )
+                }
                 return SaveResult.Saved("Saved successfully.")
             }
             ParsedBankMessageType.SAVINGS_TRANSFER -> {
@@ -1015,7 +1083,10 @@ class FinanceViewModel(
                         occurredAtMillis = pendingImport.occurredAtMillis,
                         senderName = pendingImport.senderName,
                         now = now,
-                        depositType = pendingImport.depositType
+                        depositType = pendingImport.depositType,
+                        availableDailyUseBalanceAfterMinor = pendingImport.availableBalanceMinor
+                            .takeIf { pendingImport.sourceType == BankMessageSourceType.DAILY_USE },
+                        salaryCycleSource = SalaryCycleSource.SMS
                     )
                 }
                 ParsedBankMessageType.INCOME -> {
@@ -1029,7 +1100,10 @@ class FinanceViewModel(
                         occurredAtMillis = pendingImport.occurredAtMillis,
                         senderName = pendingImport.senderName,
                         now = now,
-                        depositType = pendingImport.depositType
+                        depositType = pendingImport.depositType,
+                        availableDailyUseBalanceAfterMinor = pendingImport.availableBalanceMinor
+                            .takeIf { pendingImport.sourceType == BankMessageSourceType.DAILY_USE },
+                        salaryCycleSource = SalaryCycleSource.SMS
                     )
                 }
                 ParsedBankMessageType.SAVINGS_TRANSFER -> {

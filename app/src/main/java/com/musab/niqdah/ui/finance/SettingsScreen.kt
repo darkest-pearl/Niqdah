@@ -82,7 +82,7 @@ fun SettingsScreen(
     onUpdateProfileAndDebt: (String, String, String, String, String, String) -> Unit,
     onUpdateCategoryBudgets: (Map<String, String>) -> Unit,
     onUpdateBankMessageSettings: (Boolean, String, Boolean, String, Boolean, String, String, String, String, String, Boolean, Boolean, Int) -> Unit,
-    onUpdateReminderSettings: (Boolean, String, String, String, String, Boolean, String, String, String, Boolean, Boolean, String, String) -> Unit,
+    onUpdateReminderSettings: (Boolean, String, String, String, String, Boolean, String, String, String, Boolean, Boolean, String, String, Boolean, String) -> Unit,
     onSaveNecessaryItem: (NecessaryItem?, String, String, String, String, NecessaryItemRecurrence, NecessaryItemStatus, Boolean) -> Unit,
     onUpdateNecessaryItemStatus: (NecessaryItem, NecessaryItemStatus) -> Unit,
     onDeleteNecessaryItem: (String) -> Unit,
@@ -132,6 +132,8 @@ fun SettingsScreen(
     var isAvoidCategoryWarningEnabled by remember { mutableStateOf(true) }
     var januaryTargetDate by remember { mutableStateOf("") }
     var januaryFundTarget by remember { mutableStateOf("") }
+    var isPostSalarySavingsFollowUpEnabled by remember { mutableStateOf(true) }
+    var postSalarySavingsFollowUpIntervalDays by remember { mutableStateOf("3") }
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -194,6 +196,8 @@ fun SettingsScreen(
         isAvoidCategoryWarningEnabled = settings.isAvoidCategoryWarningEnabled
         januaryTargetDate = settings.januaryTargetDate
         januaryFundTarget = formatInputMoney(settings.januaryFundTargetAmount)
+        isPostSalarySavingsFollowUpEnabled = settings.isPostSalarySavingsFollowUpEnabled
+        postSalarySavingsFollowUpIntervalDays = settings.postSalarySavingsFollowUpIntervalDays.toString()
     }
 
     LazyColumn(
@@ -324,8 +328,15 @@ fun SettingsScreen(
                         isNotificationPermissionGranted = isNotificationPermissionGranted,
                         dailyUseBalance = balanceStatusText(uiState.data.latestDailyUseBalanceStatus),
                         savingsBalance = balanceStatusText(uiState.data.latestSavingsBalanceStatus),
+                        lastReceivedSender = uiState.data.bankMessageSettings.lastReceivedSender,
+                        lastSenderMatched = uiState.data.bankMessageSettings.lastSenderMatched,
                         lastIgnoredSender = uiState.data.bankMessageSettings.lastIgnoredSender,
                         lastIgnoredReason = uiState.data.bankMessageSettings.lastIgnoredReason,
+                        lastParsedResult = uiState.data.bankMessageSettings.lastParsedResult,
+                        lastCreatedPendingImport = uiState.data.bankMessageSettings.lastCreatedPendingImport,
+                        lastDuplicateBlocked = uiState.data.bankMessageSettings.lastDuplicateBlocked,
+                        lastDuplicateReason = uiState.data.bankMessageSettings.lastDuplicateReason,
+                        lastParserDecisionAtMillis = uiState.data.bankMessageSettings.lastParserDecisionAtMillis,
                         lastParsedBankMessageAtMillis = uiState.data.bankMessageSettings.lastParsedBankMessageAtMillis,
                         dailySenderName = dailySenderName,
                         onDailySenderNameChange = { dailySenderName = it },
@@ -437,6 +448,12 @@ fun SettingsScreen(
                         onJanuaryTargetDateChange = { januaryTargetDate = it },
                         januaryFundTarget = januaryFundTarget,
                         onJanuaryFundTargetChange = { januaryFundTarget = it },
+                        isPostSalarySavingsFollowUpEnabled = isPostSalarySavingsFollowUpEnabled,
+                        onPostSalarySavingsFollowUpEnabledChange = { isPostSalarySavingsFollowUpEnabled = it },
+                        postSalarySavingsFollowUpIntervalDays = postSalarySavingsFollowUpIntervalDays,
+                        onPostSalarySavingsFollowUpIntervalDaysChange = { value ->
+                            postSalarySavingsFollowUpIntervalDays = value.filter { char -> char.isDigit() }.take(2)
+                        },
                         isSaving = uiState.isSaving,
                         onSave = {
                             onUpdateReminderSettings(
@@ -452,7 +469,9 @@ fun SettingsScreen(
                                 areOverspendingWarningsEnabled,
                                 isAvoidCategoryWarningEnabled,
                                 januaryTargetDate,
-                                januaryFundTarget
+                                januaryFundTarget,
+                                isPostSalarySavingsFollowUpEnabled,
+                                postSalarySavingsFollowUpIntervalDays
                             )
                         }
                     )
@@ -677,8 +696,15 @@ private fun BankMessageSourcesCard(
     isNotificationPermissionGranted: Boolean,
     dailyUseBalance: String,
     savingsBalance: String,
+    lastReceivedSender: String,
+    lastSenderMatched: Boolean,
     lastIgnoredSender: String,
     lastIgnoredReason: String,
+    lastParsedResult: String,
+    lastCreatedPendingImport: Boolean,
+    lastDuplicateBlocked: Boolean,
+    lastDuplicateReason: String,
+    lastParserDecisionAtMillis: Long,
     lastParsedBankMessageAtMillis: Long,
     dailySenderName: String,
     onDailySenderNameChange: (String) -> Unit,
@@ -761,12 +787,49 @@ private fun BankMessageSourcesCard(
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
+                text = "Last SMS received from sender: ${lastReceivedSender.ifBlank { "None" }}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Matched configured sender: ${if (lastSenderMatched) "yes" else "no"}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
                 text = "Last ignored sender: ${lastIgnoredSender.ifBlank { "None" }}",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium
             )
             Text(
                 text = "Last ignored reason: ${lastIgnoredReason.ifBlank { "None" }}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Last parsed result: ${lastParsedResult.ifBlank { "None" }}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Created pending import: ${if (lastCreatedPendingImport) "yes" else "no"}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Duplicate blocked: ${if (lastDuplicateBlocked) "yes" else "no"}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Last duplicate reason: ${lastDuplicateReason.ifBlank { "None" }}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Last parser decision: ${
+                    lastParserDecisionAtMillis.takeIf { it > 0L }?.let { formatTransactionDateTime(it) } ?: "None"
+                }",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -913,6 +976,10 @@ private fun ReminderSettingsCard(
     onJanuaryTargetDateChange: (String) -> Unit,
     januaryFundTarget: String,
     onJanuaryFundTargetChange: (String) -> Unit,
+    isPostSalarySavingsFollowUpEnabled: Boolean,
+    onPostSalarySavingsFollowUpEnabledChange: (Boolean) -> Unit,
+    postSalarySavingsFollowUpIntervalDays: String,
+    onPostSalarySavingsFollowUpIntervalDaysChange: (String) -> Unit,
     isSaving: Boolean,
     onSave: () -> Unit
 ) {
@@ -1004,6 +1071,17 @@ private fun ReminderSettingsCard(
                 label = "Total fund target",
                 value = januaryFundTarget,
                 onValueChange = onJanuaryFundTargetChange
+            )
+            SourceToggleRow(
+                title = "Post-salary savings follow-up",
+                isEnabled = isPostSalarySavingsFollowUpEnabled,
+                onEnabledChange = onPostSalarySavingsFollowUpEnabledChange
+            )
+            NumberField(
+                modifier = Modifier.fillMaxWidth(),
+                label = "Follow-up interval days",
+                value = postSalarySavingsFollowUpIntervalDays,
+                onValueChange = onPostSalarySavingsFollowUpIntervalDaysChange
             )
             Button(
                 modifier = Modifier.fillMaxWidth(),

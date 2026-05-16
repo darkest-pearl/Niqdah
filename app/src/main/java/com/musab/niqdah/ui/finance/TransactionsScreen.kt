@@ -502,7 +502,7 @@ private fun PendingBankImportCard(
                     fontWeight = FontWeight.SemiBold
                 )
             }
-            PendingImportLine("Type", pendingImport.type.label)
+            PendingImportLine("Type", pendingImport.displayTypeLabel())
             if (hasMatchedPair) {
                 Text(
                     text = "Matched pair available",
@@ -557,6 +557,16 @@ private fun PendingBankImportCard(
                 PendingImportLine(
                     "Available balance",
                     formatMoney(pendingImport.availableBalance, pendingImport.availableBalanceCurrency)
+                )
+            }
+            if (pendingImport.type == ParsedBankMessageType.INCOME &&
+                pendingImport.depositType == DepositType.SALARY
+            ) {
+                Text(
+                    text = "Saving this will start/update salary cycle",
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
             if (pendingImport.originalForeignAmount != null && pendingImport.originalForeignCurrency.isNotBlank()) {
@@ -714,6 +724,13 @@ private fun PendingBankImportDisplayItem.pendingCardSummary(): String? =
             "$amount credited to $target"
         }
         is PendingBankImportDisplayItem.SinglePendingImport -> null
+    }
+
+private fun PendingBankImport.displayTypeLabel(): String =
+    when {
+        type == ParsedBankMessageType.INCOME && depositType == DepositType.SALARY -> "Salary deposit"
+        type == ParsedBankMessageType.INCOME -> "General deposit"
+        else -> type.label
     }
 
 @Composable

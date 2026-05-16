@@ -11,6 +11,7 @@ object FirestoreCollections {
     const val ACCOUNT_BALANCE_SNAPSHOTS = "accountBalanceSnapshots"
     const val ACCOUNT_LEDGER_ENTRIES = "accountLedgerEntries"
     const val INTERNAL_TRANSFER_RECORDS = "internalTransferRecords"
+    const val SALARY_CYCLES = "salaryCycles"
     const val MERCHANT_RULES = "merchantRules"
     const val SAVINGS_GOALS = "savingsGoals"
     const val NECESSARY_ITEMS = "necessaryItems"

@@ -27,6 +27,7 @@ import com.musab.niqdah.domain.finance.DebtPressureLevel
 import com.musab.niqdah.domain.finance.DebtProfile
 import com.musab.niqdah.domain.finance.DebtTracker
 import com.musab.niqdah.domain.finance.DepositType
+import com.musab.niqdah.domain.finance.DepositSubtype
 import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.ExternalTransferClassification
 import com.musab.niqdah.domain.finance.FinanceData
@@ -51,6 +52,8 @@ import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
 import com.musab.niqdah.domain.finance.PrimarySavingsGoal
 import com.musab.niqdah.domain.finance.ReminderSettings
+import com.musab.niqdah.domain.finance.SalaryCycle
+import com.musab.niqdah.domain.finance.SalaryCycleSource
 import com.musab.niqdah.domain.finance.SavingsGoal
 import com.musab.niqdah.domain.finance.UserFinancialProfile
 import com.musab.niqdah.domain.finance.UserPreferenceSetup
@@ -140,11 +143,13 @@ class FirebaseFinanceRepository(
 
         val disciplineExtrasFlow = combine(
             observeReminderSettings(db),
-            observeNecessaryItems(db)
-        ) { reminderSettings, necessaryItems ->
+            observeNecessaryItems(db),
+            observeSalaryCycles(db)
+        ) { reminderSettings, necessaryItems, salaryCycles ->
             DisciplineExtras(
                 reminderSettings = reminderSettings,
-                necessaryItems = necessaryItems
+                necessaryItems = necessaryItems,
+                salaryCycles = salaryCycles
             )
         }
 
@@ -161,6 +166,7 @@ class FirebaseFinanceRepository(
                 categories = core.categories,
                 transactions = core.transactions,
                 incomeTransactions = core.incomeTransactions,
+                salaryCycles = disciplineExtras.salaryCycles,
                 pendingBankImports = core.pendingBankImports,
                 accountBalanceSnapshots = bankExtras.accountBalanceSnapshots,
                 accountLedgerEntries = bankExtras.accountLedgerEntries,
@@ -263,6 +269,13 @@ class FirebaseFinanceRepository(
         internalTransferRecordsCollection(requireFirestore())
             .document(record.id)
             .set(record.toFirestore())
+            .awaitValue()
+    }
+
+    override suspend fun upsertSalaryCycle(cycle: SalaryCycle) {
+        salaryCyclesCollection(requireFirestore())
+            .document(cycle.id)
+            .set(cycle.toFirestore())
             .awaitValue()
     }
 
@@ -443,6 +456,22 @@ class FirebaseFinanceRepository(
             awaitClose { registration.remove() }
         }
 
+    private fun observeSalaryCycles(db: FirebaseFirestore): Flow<List<SalaryCycle>> =
+        callbackFlow {
+            val registration = salaryCyclesCollection(db).addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val cycles = snapshot?.documents
+                    ?.map { it.toSalaryCycle(uid) }
+                    ?.sortedByDescending { it.salaryDepositDateMillis }
+                    ?: emptyList()
+                trySend(cycles)
+            }
+            awaitClose { registration.remove() }
+        }
+
     private fun observeMerchantRules(db: FirebaseFirestore): Flow<List<MerchantRule>> =
         callbackFlow {
             val registration = merchantRulesCollection(db).addSnapshotListener { snapshot, error ->
@@ -572,6 +601,9 @@ class FirebaseFinanceRepository(
 
     private fun internalTransferRecordsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.INTERNAL_TRANSFER_RECORDS)
+
+    private fun salaryCyclesCollection(db: FirebaseFirestore): CollectionReference =
+        userDocument(db).collection(FirestoreCollections.SALARY_CYCLES)
 
     private fun merchantRulesCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.MERCHANT_RULES)
@@ -760,6 +792,7 @@ class FirebaseFinanceRepository(
             "suggestedNecessity" to suggestedNecessity.name,
             "confidence" to confidence.name,
             "depositType" to depositType.name,
+            "depositSubtype" to depositSubtype.name,
             "externalTransferClassification" to externalTransferClassification?.name,
             "receivedAtMillis" to receivedAtMillis,
             "createdAtMillis" to createdAtMillis,
@@ -816,6 +849,22 @@ class FirebaseFinanceRepository(
             "messageTimestampMillis" to messageTimestampMillis,
             "note" to note,
             "sourceMessageHash" to sourceMessageHash
+        )
+
+    private fun SalaryCycle.toFirestore(): Map<String, Any?> =
+        mapOf(
+            "userId" to userId,
+            "cycleMonth" to cycleMonth,
+            "salaryDepositAmountMinor" to salaryDepositAmountMinor,
+            "openingDailyUseBalanceMinor" to openingDailyUseBalanceMinor,
+            "salaryDepositDateMillis" to salaryDepositDateMillis,
+            "currency" to currency,
+            "source" to source.name,
+            "isOpeningBalanceConfirmed" to isOpeningBalanceConfirmed,
+            "isActive" to isActive,
+            "createdAtMillis" to createdAtMillis,
+            "updatedAtMillis" to updatedAtMillis,
+            "lastSavingsFollowUpReminderAtMillis" to lastSavingsFollowUpReminderAtMillis
         )
 
     private fun MerchantRule.toFirestore(): Map<String, Any> =
@@ -895,6 +944,9 @@ class FirebaseFinanceRepository(
                 januaryFundTargetAmountMinor,
                 januaryFundTargetAmount
             ),
+            "isPostSalarySavingsFollowUpEnabled" to isPostSalarySavingsFollowUpEnabled,
+            "postSalarySavingsFollowUpIntervalDays" to postSalarySavingsFollowUpIntervalDays,
+            "suppressedPostSalarySavingsFollowUpCycleMonth" to suppressedPostSalarySavingsFollowUpCycleMonth,
             "updatedAtMillis" to updatedAtMillis
         )
 
@@ -924,6 +976,13 @@ class FirebaseFinanceRepository(
             "isInternalTransferReminderEnabled" to isInternalTransferReminderEnabled,
             "internalTransferReminderThresholdMinutes" to internalTransferReminderThresholdMinutes,
             "lastIgnoredSender" to lastIgnoredSender,
+            "lastReceivedSender" to lastReceivedSender,
+            "lastSenderMatched" to lastSenderMatched,
+            "lastParsedResult" to lastParsedResult,
+            "lastCreatedPendingImport" to lastCreatedPendingImport,
+            "lastDuplicateBlocked" to lastDuplicateBlocked,
+            "lastDuplicateReason" to lastDuplicateReason,
+            "lastParserDecisionAtMillis" to lastParserDecisionAtMillis,
             "lastParsedBankMessageAtMillis" to lastParsedBankMessageAtMillis,
             "lastIgnoredReason" to lastIgnoredReason,
             "debitKeywords" to debitKeywords,
@@ -1060,6 +1119,7 @@ class FirebaseFinanceRepository(
             inferredAccountDebitMinor = nullableLong("inferredAccountDebitMinor")
                 ?: nullableDouble("inferredAccountDebit")?.let { majorToMinorUnits(it) },
             depositType = depositType(getString("depositType")),
+            depositSubtype = depositSubtype(getString("depositSubtype")),
             externalTransferClassification = externalTransferClassification(
                 getString("externalTransferClassification")
             )
@@ -1113,6 +1173,24 @@ class FirebaseFinanceRepository(
             note = getString("note") ?: ""
         )
     }
+
+    private fun DocumentSnapshot.toSalaryCycle(uid: String): SalaryCycle =
+        SalaryCycle(
+            id = id,
+            userId = getString("userId") ?: uid,
+            cycleMonth = getString("cycleMonth") ?: id.removePrefix("salary-cycle-"),
+            salaryDepositAmountMinor = long("salaryDepositAmountMinor"),
+            openingDailyUseBalanceMinor = nullableLong("openingDailyUseBalanceMinor"),
+            salaryDepositDateMillis = long("salaryDepositDateMillis"),
+            currency = getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
+            source = salaryCycleSource(getString("source")),
+            isOpeningBalanceConfirmed = getBoolean("isOpeningBalanceConfirmed")
+                ?: (nullableLong("openingDailyUseBalanceMinor") != null),
+            isActive = getBoolean("isActive") ?: true,
+            createdAtMillis = long("createdAtMillis"),
+            updatedAtMillis = long("updatedAtMillis"),
+            lastSavingsFollowUpReminderAtMillis = long("lastSavingsFollowUpReminderAtMillis")
+        )
 
     private fun DocumentSnapshot.toInternalTransferRecord(): InternalTransferRecord? {
         val direction = internalTransferDirection(getString("direction")) ?: return null
@@ -1196,6 +1274,16 @@ class FirebaseFinanceRepository(
                     ?: defaults.internalTransferReminderThresholdMinutes
                 ).coerceIn(1, 24 * 60),
             lastIgnoredSender = getString("lastIgnoredSender") ?: defaults.lastIgnoredSender,
+            lastReceivedSender = getString("lastReceivedSender") ?: defaults.lastReceivedSender,
+            lastSenderMatched = getBoolean("lastSenderMatched") ?: defaults.lastSenderMatched,
+            lastParsedResult = getString("lastParsedResult") ?: defaults.lastParsedResult,
+            lastCreatedPendingImport = getBoolean("lastCreatedPendingImport") ?: defaults.lastCreatedPendingImport,
+            lastDuplicateBlocked = getBoolean("lastDuplicateBlocked") ?: defaults.lastDuplicateBlocked,
+            lastDuplicateReason = getString("lastDuplicateReason") ?: defaults.lastDuplicateReason,
+            lastParserDecisionAtMillis = long(
+                "lastParserDecisionAtMillis",
+                defaults.lastParserDecisionAtMillis
+            ),
             lastParsedBankMessageAtMillis = long(
                 "lastParsedBankMessageAtMillis",
                 defaults.lastParsedBankMessageAtMillis
@@ -1256,7 +1344,16 @@ class FirebaseFinanceRepository(
             januaryFundTargetAmountMinor = long(
                 "januaryFundTargetAmountMinor",
                 majorToMinorUnits(double("januaryFundTargetAmount", defaults.januaryFundTargetAmount))
-            )
+            ),
+            isPostSalarySavingsFollowUpEnabled = getBoolean("isPostSalarySavingsFollowUpEnabled")
+                ?: defaults.isPostSalarySavingsFollowUpEnabled,
+            postSalarySavingsFollowUpIntervalDays = int(
+                field = "postSalarySavingsFollowUpIntervalDays",
+                default = defaults.postSalarySavingsFollowUpIntervalDays
+            ).coerceIn(1, 31),
+            suppressedPostSalarySavingsFollowUpCycleMonth =
+                getString("suppressedPostSalarySavingsFollowUpCycleMonth")
+                    ?: defaults.suppressedPostSalarySavingsFollowUpCycleMonth
         )
     }
 
@@ -1381,6 +1478,9 @@ class FirebaseFinanceRepository(
     private fun depositType(value: String?): DepositType =
         DepositType.entries.firstOrNull { it.name == value } ?: DepositType.OTHER_INCOME
 
+    private fun depositSubtype(value: String?): DepositSubtype =
+        DepositSubtype.entries.firstOrNull { it.name == value } ?: DepositSubtype.UNKNOWN_INCOME
+
     private fun externalTransferClassification(value: String?): ExternalTransferClassification? =
         ExternalTransferClassification.entries.firstOrNull { it.name == value }
 
@@ -1403,6 +1503,9 @@ class FirebaseFinanceRepository(
 
     private fun accountLedgerSource(value: String?): AccountLedgerSource? =
         AccountLedgerSource.entries.firstOrNull { it.name == value }
+
+    private fun salaryCycleSource(value: String?): SalaryCycleSource =
+        SalaryCycleSource.entries.firstOrNull { it.name == value } ?: SalaryCycleSource.MANUAL
 
     private fun internalTransferDirection(value: String?): InternalTransferDirection? =
         InternalTransferDirection.entries.firstOrNull { it.name == value }
@@ -1450,5 +1553,6 @@ private data class BankExtras(
 
 private data class DisciplineExtras(
     val reminderSettings: ReminderSettings,
-    val necessaryItems: List<NecessaryItem>
+    val necessaryItems: List<NecessaryItem>,
+    val salaryCycles: List<SalaryCycle>
 )

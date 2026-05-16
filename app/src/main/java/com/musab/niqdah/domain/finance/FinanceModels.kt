@@ -114,6 +114,7 @@ data class FinanceData(
     val categories: List<BudgetCategory>,
     val transactions: List<ExpenseTransaction>,
     val incomeTransactions: List<IncomeTransaction>,
+    val salaryCycles: List<SalaryCycle> = emptyList(),
     val pendingBankImports: List<PendingBankImport>,
     val accountBalanceSnapshots: List<AccountBalanceSnapshot>,
     val accountLedgerEntries: List<AccountLedgerEntry> = emptyList(),
@@ -184,6 +185,7 @@ data class FinanceData(
                 categories = emptyList(),
                 transactions = emptyList(),
                 incomeTransactions = emptyList(),
+                salaryCycles = emptyList(),
                 pendingBankImports = emptyList(),
                 accountBalanceSnapshots = emptyList(),
                 accountLedgerEntries = emptyList(),
@@ -257,8 +259,32 @@ data class ReminderSettings(
     val januaryFundTargetAmount: Double = 0.0,
     val updatedAtMillis: Long = 0L,
     val monthlySavingsTargetAmountMinor: Long = 0L,
-    val januaryFundTargetAmountMinor: Long = 0L
+    val januaryFundTargetAmountMinor: Long = 0L,
+    val isPostSalarySavingsFollowUpEnabled: Boolean = true,
+    val postSalarySavingsFollowUpIntervalDays: Int = 3,
+    val suppressedPostSalarySavingsFollowUpCycleMonth: String = ""
 )
+
+data class SalaryCycle(
+    val id: String,
+    val userId: String = "",
+    val cycleMonth: String,
+    val salaryDepositAmountMinor: Long,
+    val openingDailyUseBalanceMinor: Long? = null,
+    val salaryDepositDateMillis: Long,
+    val currency: String = FinanceDefaults.DEFAULT_CURRENCY,
+    val source: SalaryCycleSource = SalaryCycleSource.MANUAL,
+    val isOpeningBalanceConfirmed: Boolean = openingDailyUseBalanceMinor != null,
+    val isActive: Boolean = true,
+    val createdAtMillis: Long = 0L,
+    val updatedAtMillis: Long = 0L,
+    val lastSavingsFollowUpReminderAtMillis: Long = 0L
+)
+
+enum class SalaryCycleSource(val label: String) {
+    SMS("SMS"),
+    MANUAL("Manual")
+}
 
 data class NecessaryItem(
     val id: String,
@@ -401,6 +427,13 @@ data class BankMessageParserSettings(
     val isInternalTransferReminderEnabled: Boolean = true,
     val internalTransferReminderThresholdMinutes: Int = 10,
     val lastIgnoredSender: String = "",
+    val lastReceivedSender: String = "",
+    val lastSenderMatched: Boolean = false,
+    val lastParsedResult: String = "",
+    val lastCreatedPendingImport: Boolean = false,
+    val lastDuplicateBlocked: Boolean = false,
+    val lastDuplicateReason: String = "",
+    val lastParserDecisionAtMillis: Long = 0L,
     val lastParsedBankMessageAtMillis: Long = 0L,
     val lastIgnoredReason: String = "",
     val debitKeywords: List<String> = FinanceDefaults.DEFAULT_DEBIT_KEYWORDS,
@@ -441,6 +474,14 @@ enum class DepositType(val label: String) {
     TRANSFER("Transfer")
 }
 
+enum class DepositSubtype(val label: String) {
+    SALARY("Salary deposit"),
+    GENERAL_DEPOSIT("General deposit"),
+    REFUND("Refund"),
+    TRANSFER_IN("Transfer in"),
+    UNKNOWN_INCOME("Unknown income")
+}
+
 enum class ExternalTransferClassification(val label: String) {
     TRANSFER_TO_MY_SAVINGS("Transfer to my savings"),
     TRANSFER_TO_ANOTHER_PERSON("Transfer to another person"),
@@ -477,7 +518,8 @@ data class ParsedBankMessage(
     val availableBalanceMinor: Long? = null,
     val originalForeignAmountMinor: Long? = null,
     val inferredAccountDebitMinor: Long? = null,
-    val depositType: DepositType = DepositType.OTHER_INCOME
+    val depositType: DepositType = DepositType.OTHER_INCOME,
+    val depositSubtype: DepositSubtype = DepositSubtype.UNKNOWN_INCOME
 )
 
 data class PendingBankImport(
@@ -515,6 +557,7 @@ data class PendingBankImport(
     val originalForeignAmountMinor: Long? = null,
     val inferredAccountDebitMinor: Long? = null,
     val depositType: DepositType = DepositType.OTHER_INCOME,
+    val depositSubtype: DepositSubtype = DepositSubtype.UNKNOWN_INCOME,
     val externalTransferClassification: ExternalTransferClassification? = null
 )
 
@@ -566,6 +609,78 @@ data class CategorySpendingBreakdown(
     val optionalMinor: Long,
     val avoidMinor: Long
 )
+
+data class ProtectedCashObligation(
+    val title: String,
+    val amountMinor: Long,
+    val remainingAmountMinor: Long,
+    val categoryId: String = "",
+    val dueDateMillis: Long? = null,
+    val dueDayOfMonth: Int? = null,
+    val status: ProtectedCashObligationStatus,
+    val type: ProtectedCashObligationType
+) {
+    val isProtected: Boolean
+        get() = status == ProtectedCashObligationStatus.UNPAID && remainingAmountMinor > 0L
+}
+
+enum class ProtectedCashObligationStatus {
+    UNPAID,
+    PAID,
+    SKIPPED
+}
+
+enum class ProtectedCashObligationType {
+    RENT,
+    SAVINGS_TARGET,
+    DEBT_PAYMENT,
+    BILL,
+    FAMILY_SUPPORT,
+    SUBSCRIPTION,
+    NECESSARY_ITEM,
+    OTHER
+}
+
+data class CashProtectionInput(
+    val currentDailyUseBalanceMinor: Long?,
+    val salaryCycleOpeningBalanceMinor: Long?,
+    val totalProtectedUnpaidObligationsMinor: Long,
+    val flexibleBudgetMinor: Long,
+    val spentThisCycleMinor: Long,
+    val unknownOrUncategorizedSpendingMinor: Long
+)
+
+data class CashProtectionResult(
+    val ringProgress: Double,
+    val riskLevel: CashProtectionRiskLevel,
+    val flexibleBufferLeftMinor: Long,
+    val protectedUnpaidObligationsMinor: Long,
+    val message: String
+)
+
+enum class CashProtectionRiskLevel(val label: String) {
+    UNKNOWN_OPENING_BALANCE("Opening balance not confirmed"),
+    HEALTHY("Healthy"),
+    WATCH("Watch"),
+    TIGHT("Tight"),
+    PROTECTED_FUNDS_AT_RISK("Protected funds at risk")
+}
+
+data class SavingsFollowUpReminderStatus(
+    val shouldNotify: Boolean,
+    val state: SavingsFollowUpState,
+    val remainingSavingsTargetMinor: Long,
+    val nextEligibleReminderMillis: Long?
+)
+
+enum class SavingsFollowUpState {
+    DISABLED,
+    NO_ACTIVE_CYCLE,
+    NOT_DUE,
+    DUE,
+    COMPLETED,
+    SUPPRESSED_FOR_CYCLE
+}
 
 data class SavingsTargetStatus(
     val targetAmount: Double,

@@ -26,17 +26,20 @@ import com.musab.niqdah.domain.finance.BankMessageImportHistory
 import com.musab.niqdah.domain.finance.BankMessageImportRules
 import com.musab.niqdah.domain.finance.BankMessageImportStatus
 import com.musab.niqdah.domain.finance.BankMessageParser
+import com.musab.niqdah.domain.finance.BankMessageParserDecision
 import com.musab.niqdah.domain.finance.BankMessageParserSettings
 import com.musab.niqdah.domain.finance.BankMessageSourceType
 import com.musab.niqdah.domain.finance.BankMessageSourceSettings
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.CategoryType
 import com.musab.niqdah.domain.finance.DepositType
+import com.musab.niqdah.domain.finance.DepositSubtype
 import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.InternalTransferNotificationRules
 import com.musab.niqdah.domain.finance.InternalTransferNotificationState
 import com.musab.niqdah.domain.finance.MerchantRule
 import com.musab.niqdah.domain.finance.ParsedBankMessageType
+import com.musab.niqdah.domain.finance.ParsedBankMessage
 import com.musab.niqdah.domain.finance.PendingBankImport
 import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
 import com.musab.niqdah.domain.finance.majorToMinorUnits
@@ -61,14 +64,36 @@ class BankSmsImportProcessor(
         val db = FirebaseProvider.firestore(appContext) ?: return SmsImportProcessResult.FirebaseUnavailable
         val settings = fetchSettings(db)
         if (!settings.isAutomaticSmsImportEnabled) return SmsImportProcessResult.Disabled
+        val now = System.currentTimeMillis()
 
         if (!BankMessageImportRules.isSenderWhitelisted(senderName, settings)) {
-            updateSmsStatus(db, mapOf("lastIgnoredSender" to senderName))
+            updateParserDecision(
+                db = db,
+                senderName = senderName,
+                senderMatched = false,
+                ignoredReason = BankMessageParserDecision.REASON_SENDER_NOT_WHITELISTED,
+                parsedResult = "",
+                createdPendingImport = false,
+                duplicateBlocked = false,
+                duplicateReason = "",
+                timestampMillis = now
+            )
             return SmsImportProcessResult.IgnoredSender
         }
 
         val hash = BankMessageImportRules.hashFor(senderName, messageBody, receivedAtMillis)
         if (pendingBankImportsCollection(db).document(hash).get().awaitValue().exists()) {
+            updateParserDecision(
+                db = db,
+                senderName = senderName,
+                senderMatched = true,
+                ignoredReason = BankMessageParserDecision.REASON_DUPLICATE,
+                parsedResult = "",
+                createdPendingImport = false,
+                duplicateBlocked = true,
+                duplicateReason = BankMessageParserDecision.REASON_DUPLICATE,
+                timestampMillis = now
+            )
             return SmsImportProcessResult.Duplicate
         }
         val historySnapshot = bankMessageImportHistoryCollection(db).document(hash).get().awaitValue()
@@ -79,7 +104,6 @@ class BankSmsImportProcessor(
         val categories = fetchCategories(db)
         val latestBalances = fetchAccountBalanceSnapshots(db)
         val merchantRules = fetchMerchantRules(db)
-        val now = System.currentTimeMillis()
         val pendingImport = parser.parsePendingImport(
             rawMessage = messageBody,
             senderName = senderName,
@@ -94,10 +118,22 @@ class BankSmsImportProcessor(
 
         val hasSavedMatchingRecord = hasSavedMatchingRecord(db, pendingImport)
         if (!BankMessageImportRules.shouldAllowReimport(historyStatus, hasSavedMatchingRecord)) {
+            updateParserDecision(
+                db = db,
+                senderName = senderName,
+                senderMatched = true,
+                ignoredReason = BankMessageParserDecision.REASON_ALREADY_HANDLED,
+                parsedResult = pendingImport.type.label,
+                createdPendingImport = false,
+                duplicateBlocked = true,
+                duplicateReason = BankMessageParserDecision.REASON_ALREADY_HANDLED,
+                timestampMillis = now
+            )
             return SmsImportProcessResult.Duplicate
         }
 
-        if (pendingImport.type == ParsedBankMessageType.INFORMATIONAL) {
+        val ignoredReason = BankMessageParserDecision.ignoredReason(pendingImport.toParsedDecisionMessage())
+        if (ignoredReason.isNotBlank()) {
             bankMessageImportHistoryCollection(db)
                 .document(hash)
                 .set(
@@ -109,16 +145,22 @@ class BankSmsImportProcessor(
                     ).toFirestore()
                 )
                 .awaitValue()
-            updateSmsStatus(
-                db,
-                mapOf(
-                    "lastIgnoredSender" to senderName,
-                    "lastIgnoredReason" to pendingImport.ignoredReason.ifBlank {
-                        "Ignored informational bank message."
-                    }
-                )
+            updateParserDecision(
+                db = db,
+                senderName = senderName,
+                senderMatched = true,
+                ignoredReason = ignoredReason,
+                parsedResult = pendingImport.type.label,
+                createdPendingImport = false,
+                duplicateBlocked = false,
+                duplicateReason = "",
+                timestampMillis = now
             )
-            return SmsImportProcessResult.IgnoredInformational
+            return if (pendingImport.type == ParsedBankMessageType.INFORMATIONAL) {
+                SmsImportProcessResult.IgnoredInformational
+            } else {
+                SmsImportProcessResult.IgnoredUnsupported
+            }
         }
 
         pendingBankImportsCollection(db)
@@ -142,7 +184,17 @@ class BankSmsImportProcessor(
                 ).toFirestore()
             )
             .awaitValue()
-        updateSmsStatus(db, mapOf("lastParsedBankMessageAtMillis" to receivedAtMillis))
+        updateParserDecision(
+            db = db,
+            senderName = senderName,
+            senderMatched = true,
+            ignoredReason = "",
+            parsedResult = pendingImport.type.label,
+            createdPendingImport = true,
+            duplicateBlocked = false,
+            duplicateReason = "",
+            timestampMillis = receivedAtMillis
+        )
         val pendingImports = fetchPendingBankImports(db)
         val pairedImport = PendingBankImportSaveRules.findMatchingTransferCounterpart(pendingImport, pendingImports)
         val internalTransferPlan = InternalTransferNotificationRules.notificationPlan(
@@ -197,6 +249,14 @@ class BankSmsImportProcessor(
                 ((snapshot.get("internalTransferReminderThresholdMinutes") as? Number)?.toInt()
                     ?: defaults.internalTransferReminderThresholdMinutes).coerceIn(1, 24 * 60),
             lastIgnoredSender = snapshot.getString("lastIgnoredSender") ?: "",
+            lastReceivedSender = snapshot.getString("lastReceivedSender") ?: "",
+            lastSenderMatched = snapshot.getBoolean("lastSenderMatched") ?: false,
+            lastParsedResult = snapshot.getString("lastParsedResult") ?: "",
+            lastCreatedPendingImport = snapshot.getBoolean("lastCreatedPendingImport") ?: false,
+            lastDuplicateBlocked = snapshot.getBoolean("lastDuplicateBlocked") ?: false,
+            lastDuplicateReason = snapshot.getString("lastDuplicateReason") ?: "",
+            lastParserDecisionAtMillis =
+                (snapshot.get("lastParserDecisionAtMillis") as? Number)?.toLong() ?: 0L,
             lastParsedBankMessageAtMillis =
                 (snapshot.get("lastParsedBankMessageAtMillis") as? Number)?.toLong() ?: 0L,
             lastIgnoredReason = snapshot.getString("lastIgnoredReason") ?: "",
@@ -315,7 +375,10 @@ class BankSmsImportProcessor(
                     inferredAccountDebitMinor = (snapshot.get("inferredAccountDebitMinor") as? Number)?.toLong(),
                     depositType = DepositType.entries.firstOrNull {
                         it.name == snapshot.getString("depositType")
-                    } ?: DepositType.OTHER_INCOME
+                    } ?: DepositType.OTHER_INCOME,
+                    depositSubtype = DepositSubtype.entries.firstOrNull {
+                        it.name == snapshot.getString("depositSubtype")
+                    } ?: DepositSubtype.UNKNOWN_INCOME
                 )
             }
 
@@ -443,6 +506,34 @@ class BankSmsImportProcessor(
             .awaitValue()
     }
 
+    private suspend fun updateParserDecision(
+        db: FirebaseFirestore,
+        senderName: String,
+        senderMatched: Boolean,
+        ignoredReason: String,
+        parsedResult: String,
+        createdPendingImport: Boolean,
+        duplicateBlocked: Boolean,
+        duplicateReason: String,
+        timestampMillis: Long
+    ) {
+        updateSmsStatus(
+            db,
+            mapOf(
+                "lastReceivedSender" to senderName,
+                "lastSenderMatched" to senderMatched,
+                "lastIgnoredSender" to if (ignoredReason.isNotBlank()) senderName else "",
+                "lastIgnoredReason" to ignoredReason,
+                "lastParsedResult" to parsedResult,
+                "lastCreatedPendingImport" to createdPendingImport,
+                "lastDuplicateBlocked" to duplicateBlocked,
+                "lastDuplicateReason" to duplicateReason,
+                "lastParserDecisionAtMillis" to timestampMillis,
+                "lastParsedBankMessageAtMillis" to timestampMillis
+            )
+        )
+    }
+
     private fun userDocument(db: FirebaseFirestore) =
         db.collection(FirestoreCollections.USERS).document(uid)
 
@@ -516,6 +607,7 @@ class BankSmsImportProcessor(
             "suggestedNecessity" to suggestedNecessity.name,
             "confidence" to confidence.name,
             "depositType" to depositType.name,
+            "depositSubtype" to depositSubtype.name,
             "receivedAtMillis" to receivedAtMillis,
             "createdAtMillis" to createdAtMillis,
             "updatedAtMillis" to updatedAtMillis
@@ -554,6 +646,21 @@ class BankSmsImportProcessor(
 
     private fun AccountBalanceSnapshot.documentId(): String =
         "${accountKind.name}-$sourceMessageHash"
+
+    private fun PendingBankImport.toParsedDecisionMessage(): ParsedBankMessage =
+        ParsedBankMessage(
+            rawMessage = "",
+            senderName = senderName,
+            sourceType = sourceType,
+            type = type,
+            amount = amount,
+            currency = currency,
+            ignoredReason = ignoredReason,
+            occurredAtMillis = occurredAtMillis,
+            amountMinor = amountMinor,
+            depositType = depositType,
+            depositSubtype = depositSubtype
+        )
 
     private fun PendingBankImport.notificationTitle(): String =
         when (type) {
@@ -645,6 +752,7 @@ enum class SmsImportProcessResult {
     Disabled,
     IgnoredSender,
     IgnoredInformational,
+    IgnoredUnsupported,
     Duplicate,
     FirebaseUnavailable
 }

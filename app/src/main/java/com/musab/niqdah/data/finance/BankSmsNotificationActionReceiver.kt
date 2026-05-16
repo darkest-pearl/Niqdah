@@ -38,6 +38,9 @@ import com.musab.niqdah.domain.finance.ParsedBankMessageType
 import com.musab.niqdah.domain.finance.PendingBankImport
 import com.musab.niqdah.domain.finance.PendingBankImportSaveRules
 import com.musab.niqdah.domain.finance.SaveResult
+import com.musab.niqdah.domain.finance.SalaryCycle
+import com.musab.niqdah.domain.finance.SalaryCycleRules
+import com.musab.niqdah.domain.finance.SalaryCycleSource
 import com.musab.niqdah.domain.finance.SavingsGoal
 import com.musab.niqdah.domain.finance.effectiveMinorUnits
 import com.musab.niqdah.domain.finance.majorToMinorUnits
@@ -369,6 +372,35 @@ private class PendingBankImportNotificationHandler(
                 }.toFirestore()
             )
             .awaitValue()
+        upsertSalaryCycleFromIncome(db, pendingImport, amount, now)
+    }
+
+    private suspend fun upsertSalaryCycleFromIncome(
+        db: FirebaseFirestore,
+        pendingImport: PendingBankImport,
+        amount: Double,
+        now: Long
+    ) {
+        if (pendingImport.depositType != DepositType.SALARY) return
+        val amountMinor = pendingImport.amountMinor ?: majorToMinorUnits(amount)
+        val currentBalanceMinor = pendingImport.availableBalanceMinor
+            .takeIf { pendingImport.sourceType != BankMessageSourceType.SAVINGS }
+        val existingCycles = salaryCyclesCollection(db)
+            .get()
+            .awaitValue()
+            .documents
+            .map { it.toSalaryCycle() }
+        val cycle = SalaryCycleRules.upsertForSalaryDeposit(
+            existingCycles = existingCycles,
+            userId = uid,
+            amountMinor = amountMinor,
+            currentDailyUseBalanceMinor = currentBalanceMinor,
+            currency = pendingImport.currency,
+            occurredAtMillis = pendingImport.occurredAtMillis,
+            source = SalaryCycleSource.SMS,
+            nowMillis = now
+        )
+        salaryCyclesCollection(db).document(cycle.id).set(cycle.toFirestore()).awaitValue()
     }
 
     private suspend fun upsertAccountLedgerEntry(
@@ -498,6 +530,9 @@ private class PendingBankImportNotificationHandler(
 
     private fun internalTransferRecordsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.INTERNAL_TRANSFER_RECORDS)
+
+    private fun salaryCyclesCollection(db: FirebaseFirestore): CollectionReference =
+        userDocument(db).collection(FirestoreCollections.SALARY_CYCLES)
 
     private fun goalsCollection(db: FirebaseFirestore): CollectionReference =
         userDocument(db).collection(FirestoreCollections.SAVINGS_GOALS)
@@ -653,6 +688,22 @@ private class PendingBankImportNotificationHandler(
             "sourceMessageHash" to sourceMessageHash
         )
 
+    private fun SalaryCycle.toFirestore(): Map<String, Any?> =
+        mapOf(
+            "userId" to userId,
+            "cycleMonth" to cycleMonth,
+            "salaryDepositAmountMinor" to salaryDepositAmountMinor,
+            "openingDailyUseBalanceMinor" to openingDailyUseBalanceMinor,
+            "salaryDepositDateMillis" to salaryDepositDateMillis,
+            "currency" to currency,
+            "source" to source.name,
+            "isOpeningBalanceConfirmed" to isOpeningBalanceConfirmed,
+            "isActive" to isActive,
+            "createdAtMillis" to createdAtMillis,
+            "updatedAtMillis" to updatedAtMillis,
+            "lastSavingsFollowUpReminderAtMillis" to lastSavingsFollowUpReminderAtMillis
+        )
+
     private fun SavingsGoal.toFirestore(): Map<String, Any> =
         mapOf(
             "name" to name,
@@ -685,6 +736,25 @@ private class PendingBankImportNotificationHandler(
             )
         )
     }
+
+    private fun DocumentSnapshot.toSalaryCycle(): SalaryCycle =
+        SalaryCycle(
+            id = id,
+            userId = getString("userId") ?: uid,
+            cycleMonth = getString("cycleMonth") ?: id.removePrefix("salary-cycle-"),
+            salaryDepositAmountMinor = long("salaryDepositAmountMinor"),
+            openingDailyUseBalanceMinor = nullableLong("openingDailyUseBalanceMinor"),
+            salaryDepositDateMillis = long("salaryDepositDateMillis"),
+            currency = getString("currency") ?: FinanceDefaults.DEFAULT_CURRENCY,
+            source = SalaryCycleSource.entries.firstOrNull { it.name == getString("source") }
+                ?: SalaryCycleSource.SMS,
+            isOpeningBalanceConfirmed = getBoolean("isOpeningBalanceConfirmed")
+                ?: (nullableLong("openingDailyUseBalanceMinor") != null),
+            isActive = getBoolean("isActive") ?: true,
+            createdAtMillis = long("createdAtMillis"),
+            updatedAtMillis = long("updatedAtMillis"),
+            lastSavingsFollowUpReminderAtMillis = long("lastSavingsFollowUpReminderAtMillis")
+        )
 
     private fun PendingBankImport.noteWithReviewContext(): String =
         listOf(description.trim(), reviewNote.trim())

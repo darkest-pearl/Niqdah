@@ -42,16 +42,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.musab.niqdah.domain.finance.AccountBalanceConfidence
 import com.musab.niqdah.domain.finance.AccountBalanceStatus
 import com.musab.niqdah.domain.finance.CategoryBudgetWarning
 import com.musab.niqdah.domain.finance.CategorySpendingBreakdown
 import com.musab.niqdah.domain.finance.CategoryType
+import com.musab.niqdah.domain.finance.CashProtectionCalculator
+import com.musab.niqdah.domain.finance.CashProtectionRiskLevel
 import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.DisciplineStatus
 import com.musab.niqdah.domain.finance.FinanceDates
 import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.NecessaryItemDue
+import com.musab.niqdah.domain.finance.SalaryCycleRules
+import com.musab.niqdah.domain.finance.SavingsFollowUpReminderRules
+import com.musab.niqdah.domain.finance.SavingsFollowUpState
 import com.musab.niqdah.domain.finance.effectiveMinorUnits
 import com.musab.niqdah.domain.finance.minorUnitsToMajor
 import java.time.LocalDate
@@ -67,6 +71,9 @@ private val NecessaryGreen = Color(0xFF31C48D)
 private val OptionalAmber = Color(0xFFF5B84B)
 private val AvoidRed = Color(0xFFFF5A5F)
 private val SavingsGreen = Color(0xFF37D67A)
+private val ProtectionYellow = Color(0xFFFFD166)
+private val ProtectionOrange = Color(0xFFFF9F43)
+private val ProtectionNeutral = Color(0xFF8C96A8)
 
 @Composable
 fun DashboardScreen(
@@ -201,14 +208,33 @@ fun MainBalanceProgressCard(
     modifier: Modifier = Modifier
 ) {
     val status = uiState.data.latestDailyUseBalanceStatus
+    val month = FinanceDates.currentYearMonth()
+    val cycle = SalaryCycleRules.activeCycle(uiState.data, month)
+    val cashProtection = CashProtectionCalculator.evaluate(uiState.data, month)
+    val savingsFollowUp = SavingsFollowUpReminderRules.evaluate(uiState.data, month, LocalDate.now())
     val currency = status?.currency ?: uiState.data.profile.currency
-    val balance = status?.let { minorUnitsToMajor(it.amountMinor) }
-    val spendablePool = uiState.dashboard.remainingSafeToSpend.takeIf { it > 0.0 }
-    val progress = if (balance != null && spendablePool != null) balance / spendablePool else null
     val amountText = status?.let { formatMoneyMinor(it.amountMinor, it.currency) } ?: "Not confirmed yet"
-    val denominatorText = spendablePool?.let { "of ${formatMoney(it, currency)} safe to spend" }
-        ?: "Safe-to-spend not confirmed yet"
-    val label = status?.confidence?.label ?: AccountBalanceConfidence.NEEDS_REVIEW.label
+    val cycleStatus = when {
+        cycle == null -> "Salary cycle not active"
+        !cycle.isOpeningBalanceConfirmed -> "Opening balance not confirmed"
+        else -> "Since salary deposit"
+    }
+    val ringLabel = when (cashProtection.riskLevel) {
+        CashProtectionRiskLevel.UNKNOWN_OPENING_BALANCE -> "--"
+        else -> formatProgress(cashProtection.ringProgress)
+    }
+    val supportLines = buildList {
+        add(cashProtection.message)
+        add("Unpaid protected obligations: ${formatMoneyMinor(cashProtection.protectedUnpaidObligationsMinor, currency)}")
+        if (cashProtection.riskLevel != CashProtectionRiskLevel.UNKNOWN_OPENING_BALANCE) {
+            add("Flexible buffer left: ${formatMoneyMinor(cashProtection.flexibleBufferLeftMinor, currency)}")
+        }
+        if (savingsFollowUp.state == SavingsFollowUpState.DUE ||
+            savingsFollowUp.state == SavingsFollowUpState.NOT_DUE
+        ) {
+            add("Savings transfer pending: ${formatMoneyMinor(savingsFollowUp.remainingSavingsTargetMinor, currency)}")
+        }
+    }
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -233,16 +259,16 @@ fun MainBalanceProgressCard(
                         color = Color.White
                     )
                     Text(
-                        text = label,
+                        text = cycleStatus,
                         style = MaterialTheme.typography.labelMedium,
                         color = Color(0xFFB9C2D2)
                     )
                 }
                 Text(
-                    text = progress?.let { formatProgress(it) } ?: "--",
+                    text = cashProtection.riskLevel.label,
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
-                    color = Coral
+                    color = cashProtection.riskLevel.color()
                 )
             }
             Row(
@@ -250,9 +276,10 @@ fun MainBalanceProgressCard(
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FinanceProgressRing(
-                    progress = progress,
-                    label = progress?.let { formatProgress(it) } ?: "--",
+                CashProtectionRainbowRing(
+                    progress = cashProtection.ringProgress,
+                    riskLevel = cashProtection.riskLevel,
+                    label = ringLabel,
                     modifier = Modifier.size(112.dp),
                     strokeWidth = 12.dp
                 )
@@ -266,11 +293,15 @@ fun MainBalanceProgressCard(
                         fontWeight = FontWeight.Bold,
                         color = Color.White
                     )
-                    Text(
-                        text = denominatorText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFFD5DBE6)
-                    )
+                    supportLines.take(4).forEach { line ->
+                        Text(
+                            text = line,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFD5DBE6),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                     status.lastUpdatedLine().firstOrNull()?.let {
                         Text(
                             text = it,
@@ -455,28 +486,79 @@ fun SegmentedCircularProgressRing(
 }
 
 @Composable
-private fun FinanceProgressRing(
-    progress: Double?,
+private fun CashProtectionRainbowRing(
+    progress: Double,
+    riskLevel: CashProtectionRiskLevel,
     label: String,
     modifier: Modifier = Modifier,
     strokeWidth: Dp
 ) {
-    val total = 10_000L
-    val filled = ((progress ?: 0.0).coerceIn(0.0, 1.0) * total).toLong()
-    SegmentedCircularProgressRing(
-        totalBudgetMinor = total,
-        necessaryMinor = filled,
-        optionalMinor = 0L,
-        avoidMinor = 0L,
-        ringBackgroundColor = CardNavyMuted,
-        necessaryColor = Coral,
-        optionalColor = Coral,
-        avoidColor = Coral,
-        centerLabel = label,
-        modifier = modifier,
-        strokeWidth = strokeWidth
+    val animatedProgress by animateFloatAsState(
+        targetValue = if (riskLevel == CashProtectionRiskLevel.UNKNOWN_OPENING_BALANCE) {
+            0f
+        } else {
+            progress.coerceIn(0.0, 1.0).toFloat()
+        },
+        animationSpec = tween(durationMillis = 700),
+        label = "cashProtectionProgress"
     )
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stroke = Stroke(width = strokeWidth.toPx(), cap = StrokeCap.Round)
+            if (riskLevel == CashProtectionRiskLevel.UNKNOWN_OPENING_BALANCE) {
+                drawArc(
+                    color = CardNavyMuted,
+                    startAngle = -90f,
+                    sweepAngle = 360f,
+                    useCenter = false,
+                    style = stroke
+                )
+            } else {
+                listOf(
+                    AvoidRed,
+                    ProtectionOrange,
+                    ProtectionYellow,
+                    SavingsGreen
+                ).forEachIndexed { index, color ->
+                    drawArc(
+                        color = color.copy(alpha = 0.32f),
+                        startAngle = -90f + (index * 90f),
+                        sweepAngle = 82f,
+                        useCenter = false,
+                        style = stroke
+                    )
+                }
+                val sweepProgress = if (riskLevel == CashProtectionRiskLevel.PROTECTED_FUNDS_AT_RISK) {
+                    1f
+                } else {
+                    animatedProgress
+                }
+                drawArc(
+                    color = riskLevel.color(),
+                    startAngle = -90f,
+                    sweepAngle = sweepProgress * 360f,
+                    useCenter = false,
+                    style = stroke
+                )
+            }
+        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = Color.White
+        )
+    }
 }
+
+private fun CashProtectionRiskLevel.color(): Color =
+    when (this) {
+        CashProtectionRiskLevel.HEALTHY -> SavingsGreen
+        CashProtectionRiskLevel.WATCH -> ProtectionYellow
+        CashProtectionRiskLevel.TIGHT -> ProtectionOrange
+        CashProtectionRiskLevel.PROTECTED_FUNDS_AT_RISK -> AvoidRed
+        CashProtectionRiskLevel.UNKNOWN_OPENING_BALANCE -> ProtectionNeutral
+    }
 
 @Composable
 private fun MetricLegendRow(line: MetricLegendLine) {
