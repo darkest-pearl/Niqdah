@@ -1,7 +1,9 @@
 package com.musab.niqdah.domain.finance
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FinanceCalculatorTest {
@@ -51,6 +53,128 @@ class FinanceCalculatorTest {
 
         assertEquals(42.50, dashboard.totalSpent, 0.001)
         assertEquals(1.0, dashboard.savingsTargetProgress, 0.001)
+        assertFalse(
+            dashboard.categorySpending.any { it.category.type == CategoryType.SAVINGS }
+        )
+    }
+
+    @Test
+    fun savingsTransfersAreExcludedFromExpenseCategoryUsageAndBreakdowns() {
+        val occurredAt = FinanceDates.parseDateInput("2026-05-08") ?: error("Invalid test date")
+        val categories = FinanceDefaults.budgetCategories(now = 0L).map { category ->
+            when (category.id) {
+                FinanceDefaults.FOOD_TRANSPORT_CATEGORY_ID -> category.copy(monthlyBudget = 500.0)
+                FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID -> category.copy(monthlyBudget = 1_000.0)
+                else -> category
+            }
+        }
+        val data = FinanceData.empty(uid = "uid").copy(
+            profile = FinanceDefaults.userProfile(uid = "uid", now = 0L).copy(
+                salary = 5_000.0,
+                monthlySavingsTarget = 1_000.0,
+                onboardingCompleted = true
+            ),
+            categories = categories,
+            transactions = listOf(
+                ExpenseTransaction(
+                    id = "necessary-food",
+                    categoryId = FinanceDefaults.FOOD_TRANSPORT_CATEGORY_ID,
+                    amount = 200.0,
+                    necessity = NecessityLevel.NECESSARY,
+                    currency = "AED",
+                    occurredAtMillis = occurredAt,
+                    yearMonth = "2026-05"
+                ),
+                ExpenseTransaction(
+                    id = "optional-food",
+                    categoryId = FinanceDefaults.FOOD_TRANSPORT_CATEGORY_ID,
+                    amount = 100.0,
+                    necessity = NecessityLevel.OPTIONAL,
+                    currency = "AED",
+                    occurredAtMillis = occurredAt,
+                    yearMonth = "2026-05"
+                ),
+                ExpenseTransaction(
+                    id = "avoid-food",
+                    categoryId = FinanceDefaults.FOOD_TRANSPORT_CATEGORY_ID,
+                    amount = 50.0,
+                    necessity = NecessityLevel.AVOID,
+                    currency = "AED",
+                    occurredAtMillis = occurredAt,
+                    yearMonth = "2026-05"
+                ),
+                ExpenseTransaction(
+                    id = "savings",
+                    categoryId = FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID,
+                    amount = 1_000.0,
+                    necessity = NecessityLevel.NECESSARY,
+                    currency = "AED",
+                    occurredAtMillis = occurredAt,
+                    yearMonth = "2026-05"
+                )
+            ),
+            goals = listOf(
+                SavingsGoal(
+                    id = FinanceDefaults.PRIMARY_GOAL_ID,
+                    name = "Marriage savings",
+                    targetAmount = 16_000.0,
+                    savedAmount = 1_000.0,
+                    isPrimary = true
+                )
+            ),
+            reminderSettings = FinanceDefaults.reminderSettings(now = 0L).copy(
+                monthlySavingsTargetAmount = 1_000.0
+            )
+        )
+
+        val dashboard = FinanceCalculator.dashboard(data, yearMonth = "2026-05", now = 0L)
+        val foodBreakdown = dashboard.categorySpendingBreakdowns.single {
+            it.category.id == FinanceDefaults.FOOD_TRANSPORT_CATEGORY_ID
+        }
+
+        assertEquals(350.0, dashboard.totalSpent, 0.001)
+        assertEquals(1.0, dashboard.savingsTargetProgress, 0.001)
+        assertEquals(350.0, foodBreakdown.spent, 0.001)
+        assertEquals(200.0, foodBreakdown.necessarySpent, 0.001)
+        assertEquals(100.0, foodBreakdown.optionalSpent, 0.001)
+        assertEquals(50.0, foodBreakdown.avoidSpent, 0.001)
+        assertFalse(dashboard.categorySpendingBreakdowns.any { it.category.type == CategoryType.SAVINGS })
+    }
+
+    @Test
+    fun categoryBreakdownClampsProgressButReportsOverBudgetAmount() {
+        val occurredAt = FinanceDates.parseDateInput("2026-05-08") ?: error("Invalid test date")
+        val categories = listOf(
+            BudgetCategory(
+                id = "food",
+                name = "Food",
+                monthlyBudget = 500.0,
+                type = CategoryType.VARIABLE
+            )
+        )
+        val data = FinanceData.empty(uid = "uid").copy(
+            profile = FinanceDefaults.userProfile(uid = "uid", now = 0L).copy(onboardingCompleted = true),
+            categories = categories,
+            transactions = listOf(
+                ExpenseTransaction(
+                    id = "food",
+                    categoryId = "food",
+                    amount = 650.0,
+                    necessity = NecessityLevel.OPTIONAL,
+                    occurredAtMillis = occurredAt,
+                    yearMonth = "2026-05"
+                )
+            )
+        )
+
+        val breakdown = FinanceCalculator.dashboard(data, yearMonth = "2026-05", now = 0L)
+            .categorySpendingBreakdowns
+            .single()
+
+        assertTrue(breakdown.isOverspent)
+        assertEquals(150.0, breakdown.overBudgetAmount, 0.001)
+        assertEquals(1.0, breakdown.visualProgress, 0.001)
+        assertEquals(1.3, breakdown.rawProgress, 0.001)
     }
 
     @Test

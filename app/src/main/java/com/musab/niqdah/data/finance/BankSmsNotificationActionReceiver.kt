@@ -28,6 +28,7 @@ import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.ExpenseTransaction
 import com.musab.niqdah.domain.finance.FinanceDates
 import com.musab.niqdah.domain.finance.FinanceDefaults
+import com.musab.niqdah.domain.finance.GoalPurpose
 import com.musab.niqdah.domain.finance.IncomeTransaction
 import com.musab.niqdah.domain.finance.InternalTransferRecord
 import com.musab.niqdah.domain.finance.InternalTransferNotificationRules
@@ -341,11 +342,22 @@ private class PendingBankImportNotificationHandler(
             )
             .awaitValue()
 
-        val goalSnapshot = goalsCollection(db).document(FinanceDefaults.MARRIAGE_GOAL_ID).get().awaitValue()
-        val defaultGoal = FinanceDefaults.savingsGoals(now).first { it.id == FinanceDefaults.MARRIAGE_GOAL_ID }
-        val goal = goalSnapshot.toSavingsGoal(defaultGoal)
+        val goal = goalsCollection(db)
+            .get()
+            .awaitValue()
+            .documents
+            .mapNotNull { snapshot ->
+                snapshot.takeIf { it.exists() }?.toSavingsGoal()
+            }
+            .filterNot { it.isArchived }
+            .let { goals ->
+                goals.firstOrNull { it.isPrimary }
+                    ?: goals.firstOrNull { it.id == FinanceDefaults.PRIMARY_GOAL_ID }
+                    ?: goals.firstOrNull { effectiveMinorUnits(it.savedAmountMinor, it.savedAmount) > 0L }
+            }
+            ?: return
         goalsCollection(db)
-            .document(FinanceDefaults.MARRIAGE_GOAL_ID)
+            .document(goal.id)
             .set(
                 run {
                     val savedAmountMinor = effectiveMinorUnits(goal.savedAmountMinor, goal.savedAmount) + amountMinor
@@ -539,27 +551,27 @@ private class PendingBankImportNotificationHandler(
         )
     }
 
-    private fun DocumentSnapshot.toSavingsGoal(default: SavingsGoal): SavingsGoal =
-        if (!exists()) {
-            default
-        } else {
-            SavingsGoal(
-                id = id,
-                name = getString("name") ?: default.name,
-                targetAmount = nullableDouble("targetAmount") ?: default.targetAmount,
-                savedAmount = nullableDouble("savedAmount") ?: default.savedAmount,
-                createdAtMillis = long("createdAtMillis", default.createdAtMillis),
-                updatedAtMillis = long("updatedAtMillis", default.updatedAtMillis),
-                targetAmountMinor = long(
-                    "targetAmountMinor",
-                    majorToMinorUnits(nullableDouble("targetAmount") ?: default.targetAmount)
-                ),
-                savedAmountMinor = long(
-                    "savedAmountMinor",
-                    majorToMinorUnits(nullableDouble("savedAmount") ?: default.savedAmount)
-                )
-            )
-        }
+    private fun DocumentSnapshot.toSavingsGoal(): SavingsGoal =
+        SavingsGoal(
+            id = id,
+            name = getString("name") ?: id,
+            targetAmount = nullableDouble("targetAmount") ?: 0.0,
+            savedAmount = nullableDouble("savedAmount") ?: 0.0,
+            targetDate = getString("targetDate") ?: "",
+            purpose = GoalPurpose.entries.firstOrNull { it.name == getString("purpose") } ?: GoalPurpose.CUSTOM,
+            isPrimary = getBoolean("isPrimary") ?: false,
+            createdAtMillis = long("createdAtMillis"),
+            updatedAtMillis = long("updatedAtMillis"),
+            targetAmountMinor = long(
+                "targetAmountMinor",
+                majorToMinorUnits(nullableDouble("targetAmount") ?: 0.0)
+            ),
+            savedAmountMinor = long(
+                "savedAmountMinor",
+                majorToMinorUnits(nullableDouble("savedAmount") ?: 0.0)
+            ),
+            isArchived = getBoolean("isArchived") ?: false
+        )
 
     private fun ExpenseTransaction.toFirestore(): Map<String, Any> =
         mapOf(
@@ -648,6 +660,10 @@ private class PendingBankImportNotificationHandler(
             "targetAmountMinor" to effectiveMinorUnits(targetAmountMinor, targetAmount),
             "savedAmount" to savedAmount,
             "savedAmountMinor" to effectiveMinorUnits(savedAmountMinor, savedAmount),
+            "targetDate" to targetDate,
+            "purpose" to purpose.name,
+            "isPrimary" to isPrimary,
+            "isArchived" to isArchived,
             "createdAtMillis" to createdAtMillis,
             "updatedAtMillis" to updatedAtMillis
         )

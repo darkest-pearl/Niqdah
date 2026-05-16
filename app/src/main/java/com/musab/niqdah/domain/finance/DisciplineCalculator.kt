@@ -72,7 +72,7 @@ object DisciplineCalculator {
         max(0.0, targetAmount - savedThisMonth)
 
     fun categorySpending(data: FinanceData, yearMonth: String): List<CategorySpend> =
-        data.categories.map { category ->
+        data.categories.filter { it.isExpenseBudgetCategory() }.map { category ->
             val spentMinor = data.transactions
                 .filter { it.yearMonth == yearMonth && it.categoryId == category.id }
                 .sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
@@ -209,16 +209,19 @@ object DisciplineCalculator {
             }
         }
 
-    private fun avoidSpendingThisMonth(data: FinanceData, yearMonth: String): Double =
-        minorUnitsToMajor(
+    private fun avoidSpendingThisMonth(data: FinanceData, yearMonth: String): Double {
+        val categoryById = data.categories.associateBy { it.id }
+        return minorUnitsToMajor(
             data.transactions
-            .filter { transaction ->
-                transaction.yearMonth == yearMonth &&
-                    (transaction.necessity == NecessityLevel.AVOID ||
-                        transaction.categoryId == FinanceDefaults.AVOID_CATEGORY_ID)
-            }
-            .sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
+                .filter { transaction ->
+                    transaction.yearMonth == yearMonth &&
+                        categoryById[transaction.categoryId]?.type != CategoryType.SAVINGS &&
+                        (transaction.necessity == NecessityLevel.AVOID ||
+                            transaction.categoryId == FinanceDefaults.AVOID_CATEGORY_ID)
+                }
+                .sumOf { effectiveMinorUnits(it.amountMinor, it.amount) }
         )
+    }
 
     private fun warningMessage(categoryName: String, level: CategoryBudgetWarningLevel): String =
         when (level) {
@@ -245,4 +248,7 @@ object DisciplineCalculator {
 
     private fun ratio(valueMinor: Long, targetMinor: Long): Double =
         if (targetMinor <= 0L) 0.0 else (valueMinor.toDouble() / targetMinor.toDouble()).coerceIn(0.0, 1.0)
+
+    private fun BudgetCategory.isExpenseBudgetCategory(): Boolean =
+        type != CategoryType.SAVINGS && type != CategoryType.DEBT
 }

@@ -78,7 +78,8 @@ data class SavingsGoal(
     val createdAtMillis: Long = 0L,
     val updatedAtMillis: Long = 0L,
     val targetAmountMinor: Long = 0L,
-    val savedAmountMinor: Long = 0L
+    val savedAmountMinor: Long = 0L,
+    val isArchived: Boolean = false
 )
 
 data class DebtTracker(
@@ -124,12 +125,30 @@ data class FinanceData(
     val reminderSettings: ReminderSettings = FinanceDefaults.reminderSettings(),
     val necessaryItems: List<NecessaryItem> = emptyList()
 ) {
-    val primaryGoal: SavingsGoal?
-        get() = goals.firstOrNull { it.isPrimary }
-            ?: profile.primaryGoalId.takeIf { it.isNotBlank() }?.let { id ->
-                goals.firstOrNull { it.id == id }
+    val visibleGoals: List<SavingsGoal>
+        get() {
+            val hasSpecificGoal = goals.any { goal ->
+                !goal.isArchived &&
+                    !goal.isEmptyGenericSavingsPlan() &&
+                    (goal.isPrimary || goal.id == profile.primaryGoalId || goal.hasContributions())
             }
-            ?: goals.firstOrNull()
+            return goals.filterNot { goal ->
+                goal.isArchived ||
+                    (
+                        hasSpecificGoal &&
+                            goal.isEmptyGenericSavingsPlan() &&
+                            !goal.isPrimary &&
+                            goal.id != profile.primaryGoalId
+                        )
+            }
+        }
+
+    val primaryGoal: SavingsGoal?
+        get() = visibleGoals.firstOrNull { it.isPrimary }
+            ?: profile.primaryGoalId.takeIf { it.isNotBlank() }?.let { id ->
+                visibleGoals.firstOrNull { it.id == id }
+            }
+            ?: visibleGoals.firstOrNull()
 
     val latestDailyUseBalance: AccountBalanceSnapshot?
         get() = latestBalance(AccountKind.DAILY_USE)
@@ -176,6 +195,17 @@ data class FinanceData(
                 reminderSettings = FinanceDefaults.reminderSettings(),
                 necessaryItems = emptyList()
             )
+    }
+
+    private fun SavingsGoal.hasContributions(): Boolean =
+        effectiveMinorUnits(savedAmountMinor, savedAmount) > 0L
+
+    private fun SavingsGoal.isEmptyGenericSavingsPlan(): Boolean {
+        val normalizedName = name.trim().lowercase()
+        val normalizedId = id.trim().lowercase()
+        val isGeneric = normalizedName in setOf("savings plan", "savings goal", "monthly savings") ||
+            normalizedId in setOf("savings_plan", "savings-goal", FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID)
+        return isGeneric && !hasContributions()
     }
 
     private fun latestBalanceStatus(accountKind: AccountKind): AccountBalanceStatus? {
@@ -518,6 +548,25 @@ data class CategorySpend(
     val isOverspent: Boolean
 )
 
+data class CategorySpendingBreakdown(
+    val category: BudgetCategory,
+    val budget: Double,
+    val spent: Double,
+    val necessarySpent: Double,
+    val optionalSpent: Double,
+    val avoidSpent: Double,
+    val remaining: Double,
+    val isOverspent: Boolean,
+    val overBudgetAmount: Double,
+    val rawProgress: Double,
+    val visualProgress: Double,
+    val budgetMinor: Long,
+    val spentMinor: Long,
+    val necessaryMinor: Long,
+    val optionalMinor: Long,
+    val avoidMinor: Long
+)
+
 data class SavingsTargetStatus(
     val targetAmount: Double,
     val savedThisMonth: Double,
@@ -601,6 +650,7 @@ data class DashboardMetrics(
     val savingsTargetProgress: Double,
     val debtProgress: Double,
     val categorySpending: List<CategorySpend>,
+    val categorySpendingBreakdowns: List<CategorySpendingBreakdown>,
     val overspendingAlerts: List<CategorySpend>,
     val healthSummary: String,
     val snapshot: MonthlySnapshot,

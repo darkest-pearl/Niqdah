@@ -1,159 +1,285 @@
 package com.musab.niqdah.ui.finance
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.AccountBalanceWallet
-import androidx.compose.material.icons.rounded.Savings
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.musab.niqdah.domain.finance.AccountBalanceConfidence
 import com.musab.niqdah.domain.finance.AccountBalanceStatus
 import com.musab.niqdah.domain.finance.CategoryBudgetWarning
+import com.musab.niqdah.domain.finance.CategorySpendingBreakdown
+import com.musab.niqdah.domain.finance.CategoryType
 import com.musab.niqdah.domain.finance.DepositType
 import com.musab.niqdah.domain.finance.DisciplineStatus
 import com.musab.niqdah.domain.finance.FinanceDates
+import com.musab.niqdah.domain.finance.FinanceDefaults
 import com.musab.niqdah.domain.finance.NecessaryItemDue
+import com.musab.niqdah.domain.finance.effectiveMinorUnits
 import com.musab.niqdah.domain.finance.minorUnitsToMajor
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
+import kotlin.math.max
+
+private val DashboardBackground = Color(0xFFF7F8FA)
+private val CardNavy = Color(0xFF101C31)
+private val CardNavyMuted = Color(0xFF2B364A)
+private val Coral = Color(0xFFFF5A5F)
+private val MutedBlueText = Color(0xFF657084)
+private val NecessaryGreen = Color(0xFF31C48D)
+private val OptionalAmber = Color(0xFFF5B84B)
+private val AvoidRed = Color(0xFFFF5A5F)
+private val SavingsGreen = Color(0xFF37D67A)
 
 @Composable
 fun DashboardScreen(
     uiState: FinanceUiState,
     padding: PaddingValues,
-    onClearError: () -> Unit
+    onClearError: () -> Unit,
+    userEmail: String? = null
 ) {
-    val currency = uiState.data.profile.currency
-    val dashboard = uiState.dashboard
-    val primaryGoal = uiState.data.primaryGoal
-
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
+            .background(DashboardBackground)
             .padding(padding),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            FinanceHeader(
-                title = "Your money control room",
-                subtitle = "Current month plan, spending pressure, savings, and debt."
+            HomeHeader(
+                name = uiState.data.profile.displayName(userEmail),
+                subtitle = userEmail?.takeIf { it.isNotBlank() } ?: "Your finance overview"
             )
         }
         item { ErrorBanner(message = uiState.errorMessage, onDismiss = onClearError) }
         item { StatusBanner(message = uiState.statusMessage, onDismiss = onClearError) }
         if (uiState.isLoading) {
-            item {
-                LoadingStateCard(message = "Loading your finance dashboard...")
-            }
+            item { LoadingStateCard(message = "Loading your finance dashboard...") }
         } else {
-            item {
-                PlanSummaryCard(uiState = uiState)
-            }
-            item {
-                AccountBalanceProgressSection(uiState = uiState)
-            }
-            item {
-                GoalProgressCard(
-                    title = primaryGoal?.name ?: "Savings goal",
-                    saved = primaryGoal?.let { formatMoney(it.savedAmount, currency) } ?: formatMoney(0.0, currency),
-                    target = primaryGoal?.let { formatMoney(it.targetAmount, currency) } ?: formatMoney(0.0, currency),
-                    progress = dashboard.primaryGoalProgress,
-                    subtitle = primaryGoal?.let {
-                        "Primary goal contribution progress. ${dashboard.disciplineStatus.januaryCountdown.daysRemaining} days remain in the current target countdown."
-                    } ?: "Create a primary goal in onboarding or settings to track progress here."
-                )
-            }
-            item {
-                MetricCard(
-                    title = "Safe to spend",
-                    value = formatMoney(dashboard.remainingSafeToSpend, currency),
-                    subtitle = "After spending, fixed reserves, savings target, and debt reduction."
-                )
-            }
+            item { MainBalanceProgressCard(uiState = uiState) }
+            item { DashboardMetricGrid(metrics = dashboardMetrics(uiState)) }
             if (uiState.shouldShowSalaryReminder()) {
                 item {
-                    InsightCard(
+                    LightInsightCard(
                         title = "Salary not recorded yet",
-                        body = "Salary has not been recorded yet. Record it manually or wait for bank SMS."
+                        body = "Record salary manually or wait for a reviewed bank import."
                     )
                 }
             }
-            item {
-                DisciplineCard(
-                    disciplineStatus = dashboard.disciplineStatus,
-                    currency = currency
-                )
-            }
-            item {
-                GoalCountdownCard(
-                    disciplineStatus = dashboard.disciplineStatus,
-                    currency = currency
-                )
-            }
-            item {
-                FinanceProgressCard(
-                    title = "Debt progress",
-                    value = formatProgress(dashboard.debtProgress),
-                    progress = dashboard.debtProgress,
-                    subtitle = "${formatMoney(uiState.data.debt.remainingAmount, currency)} remaining from ${formatMoney(uiState.data.debt.startingAmount, currency)}."
-                )
-            }
-            item {
-                FinanceProgressCard(
-                    title = "Savings target progress",
-                    value = formatProgress(dashboard.savingsTargetProgress),
-                    progress = dashboard.savingsTargetProgress,
-                    subtitle = "This month against the ${formatMoney(dashboard.disciplineStatus.savingsTarget.targetAmount, currency)} savings target."
-                )
-            }
-            item {
-                HealthSummaryCard(summary = dashboard.healthSummary)
+            if (uiState.dashboard.overspendingAlerts.isNotEmpty()) {
+                item { SectionHeader(title = "Category alerts") }
+                uiState.dashboard.overspendingAlerts.take(3).forEach { alert ->
+                    item {
+                        OverspendingCard(
+                            title = alert.category.name,
+                            amount = formatMoney(-alert.remaining, uiState.data.profile.currency)
+                        )
+                    }
+                }
             }
             item {
                 RecentActivityCard(uiState = uiState)
             }
-            item {
-                InsightCard(
-                    title = "Ask Niqdah what to focus on this month",
-                    body = "Use AI Chat for a focused spending check, goal pace review, or purchase decision based on the numbers already in your plan."
+        }
+        item { Spacer(modifier = Modifier.height(4.dp)) }
+    }
+}
+
+@Composable
+fun HomeHeader(
+    name: String,
+    subtitle: String?,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(
+            modifier = Modifier.size(48.dp),
+            shape = CircleShape,
+            color = CardNavy
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Rounded.Person,
+                    contentDescription = null,
+                    tint = Color.White
                 )
             }
-            item {
-                NecessaryRemindersCard(disciplineStatus = dashboard.disciplineStatus)
+        }
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = name,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = CardNavy,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            subtitle?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedBlueText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
-            item {
-                SectionHeader(title = "Category alerts")
-            }
-            if (dashboard.overspendingAlerts.isEmpty()) {
-                item {
-                    EmptyStateCard(
-                        title = "No overspending",
-                        body = "Every category is within its monthly budget."
+        }
+        HeaderIconButton(icon = Icons.Rounded.Search, contentDescription = "Search")
+        HeaderIconButton(icon = Icons.Rounded.Notifications, contentDescription = "Notifications")
+    }
+}
+
+@Composable
+private fun HeaderIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String
+) {
+    Surface(
+        modifier = Modifier.size(42.dp),
+        shape = CircleShape,
+        color = Color.White,
+        shadowElevation = 1.dp
+    ) {
+        IconButton(onClick = {}) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = CardNavy
+            )
+        }
+    }
+}
+
+@Composable
+fun MainBalanceProgressCard(
+    uiState: FinanceUiState,
+    modifier: Modifier = Modifier
+) {
+    val status = uiState.data.latestDailyUseBalanceStatus
+    val currency = status?.currency ?: uiState.data.profile.currency
+    val balance = status?.let { minorUnitsToMajor(it.amountMinor) }
+    val spendablePool = uiState.dashboard.remainingSafeToSpend.takeIf { it > 0.0 }
+    val progress = if (balance != null && spendablePool != null) balance / spendablePool else null
+    val amountText = status?.let { formatMoneyMinor(it.amountMinor, it.currency) } ?: "Not confirmed yet"
+    val denominatorText = spendablePool?.let { "of ${formatMoney(it, currency)} safe to spend" }
+        ?: "Safe-to-spend not confirmed yet"
+    val label = status?.confidence?.label ?: AccountBalanceConfidence.NEEDS_REVIEW.label
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = CardNavy),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(
+                        text = "Daily-use / Checking",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFFB9C2D2)
                     )
                 }
-            } else {
-                items(dashboard.overspendingAlerts, key = { it.category.id }) { alert ->
-                    OverspendingCard(
-                        title = alert.category.name,
-                        amount = formatMoney(-alert.remaining, currency)
+                Text(
+                    text = progress?.let { formatProgress(it) } ?: "--",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Coral
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FinanceProgressRing(
+                    progress = progress,
+                    label = progress?.let { formatProgress(it) } ?: "--",
+                    modifier = Modifier.size(112.dp),
+                    strokeWidth = 12.dp
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = amountText,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
                     )
+                    Text(
+                        text = denominatorText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFFD5DBE6)
+                    )
+                    status.lastUpdatedLine().firstOrNull()?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFA8B2C4),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         }
@@ -161,52 +287,418 @@ fun DashboardScreen(
 }
 
 @Composable
-private fun PlanSummaryCard(uiState: FinanceUiState) {
-    val currency = uiState.data.profile.currency
-    val dashboard = uiState.dashboard
-    PremiumCard(containerColor = MaterialTheme.colorScheme.primaryContainer) {
+fun DashboardMetricGrid(
+    metrics: List<DashboardMetric>,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        metrics.chunked(2).forEach { rowMetrics ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                rowMetrics.forEach { metric ->
+                    CircularMetricCard(
+                        metric = metric,
+                        modifier = Modifier
+                            .weight(1f)
+                            .aspectRatio(0.72f)
+                    )
+                }
+                if (rowMetrics.size == 1) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CircularMetricCard(
+    metric: DashboardMetric,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = CardNavy),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = metric.title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            SegmentedCircularProgressRing(
+                totalBudgetMinor = metric.totalBudgetMinor,
+                necessaryMinor = metric.necessaryMinor,
+                optionalMinor = metric.optionalMinor,
+                avoidMinor = metric.avoidMinor,
+                ringBackgroundColor = CardNavyMuted,
+                necessaryColor = metric.necessaryColor,
+                optionalColor = metric.optionalColor,
+                avoidColor = metric.avoidColor,
+                centerLabel = metric.centerLabel,
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .size(76.dp),
+                strokeWidth = 8.dp
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(
+                    text = metric.amountText,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = metric.supportingText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (metric.isOverBudget) Coral else Color(0xFFB9C2D2),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                metric.legendLines.forEach { line ->
+                    MetricLegendRow(line = line)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SegmentedCircularProgressRing(
+    totalBudgetMinor: Long,
+    necessaryMinor: Long,
+    optionalMinor: Long,
+    avoidMinor: Long,
+    ringBackgroundColor: Color,
+    necessaryColor: Color,
+    optionalColor: Color,
+    avoidColor: Color,
+    centerLabel: String,
+    modifier: Modifier = Modifier,
+    strokeWidth: Dp
+) {
+    val spentMinor = necessaryMinor + optionalMinor + avoidMinor
+    val visualScale = when {
+        totalBudgetMinor <= 0L || spentMinor <= 0L -> 0.0
+        spentMinor > totalBudgetMinor -> totalBudgetMinor.toDouble() / spentMinor.toDouble()
+        else -> 1.0
+    }
+    val necessaryProgress by animateFloatAsState(
+        targetValue = segmentProgress(necessaryMinor, totalBudgetMinor, visualScale),
+        animationSpec = tween(durationMillis = 700),
+        label = "necessarySegment"
+    )
+    val optionalProgress by animateFloatAsState(
+        targetValue = segmentProgress(optionalMinor, totalBudgetMinor, visualScale),
+        animationSpec = tween(durationMillis = 700),
+        label = "optionalSegment"
+    )
+    val avoidProgress by animateFloatAsState(
+        targetValue = segmentProgress(avoidMinor, totalBudgetMinor, visualScale),
+        animationSpec = tween(durationMillis = 700),
+        label = "avoidSegment"
+    )
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stroke = Stroke(width = strokeWidth.toPx(), cap = StrokeCap.Round)
+            drawArc(
+                color = ringBackgroundColor,
+                startAngle = -90f,
+                sweepAngle = 360f,
+                useCenter = false,
+                style = stroke
+            )
+            var startAngle = -90f
+            listOf(
+                necessaryProgress to necessaryColor,
+                optionalProgress to optionalColor,
+                avoidProgress to avoidColor
+            ).forEach { (progress, color) ->
+                if (progress > 0f) {
+                    val sweep = progress * 360f
+                    drawArc(
+                        color = color,
+                        startAngle = startAngle,
+                        sweepAngle = sweep,
+                        useCenter = false,
+                        style = stroke
+                    )
+                    startAngle += sweep
+                }
+            }
+        }
         Text(
-            text = "Financial command center",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onPrimaryContainer
-        )
-        Text(
-            text = "Good ${dayPartGreeting()}",
-            style = MaterialTheme.typography.headlineSmall,
+            text = centerLabel,
+            style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onPrimaryContainer
-        )
-        Text(
-            text = dashboard.healthSummary,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            style = MaterialTheme.typography.bodyLarge
-        )
-        DisciplineLine(
-            label = "Income",
-            value = formatMoney(dashboard.totalMonthlyIncome, currency)
-        )
-        DisciplineLine(
-            label = "Spent",
-            value = formatMoney(dashboard.totalSpent, currency)
+            color = Color.White
         )
     }
 }
 
 @Composable
-private fun AccountBalanceProgressSection(uiState: FinanceUiState) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        DailyUseBalanceProgressCard(uiState = uiState)
-        SavingsBalanceProgressCard(uiState = uiState)
+private fun FinanceProgressRing(
+    progress: Double?,
+    label: String,
+    modifier: Modifier = Modifier,
+    strokeWidth: Dp
+) {
+    val total = 10_000L
+    val filled = ((progress ?: 0.0).coerceIn(0.0, 1.0) * total).toLong()
+    SegmentedCircularProgressRing(
+        totalBudgetMinor = total,
+        necessaryMinor = filled,
+        optionalMinor = 0L,
+        avoidMinor = 0L,
+        ringBackgroundColor = CardNavyMuted,
+        necessaryColor = Coral,
+        optionalColor = Coral,
+        avoidColor = Coral,
+        centerLabel = label,
+        modifier = modifier,
+        strokeWidth = strokeWidth
+    )
+}
+
+@Composable
+private fun MetricLegendRow(line: MetricLegendLine) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Surface(modifier = Modifier.size(7.dp), shape = CircleShape, color = line.color) {}
+        Text(
+            text = "${line.label} ${line.value}",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFFB9C2D2),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
-private fun dayPartGreeting(): String =
-    when (java.time.LocalTime.now().hour) {
-        in 5..11 -> "morning"
-        in 12..16 -> "afternoon"
-        in 17..21 -> "evening"
-        else -> "night"
+private fun segmentProgress(amountMinor: Long, totalBudgetMinor: Long, visualScale: Double): Float =
+    if (totalBudgetMinor <= 0L || amountMinor <= 0L) {
+        0f
+    } else {
+        ((amountMinor.toDouble() * visualScale) / totalBudgetMinor.toDouble()).toFloat().coerceIn(0f, 1f)
     }
+
+data class DashboardMetric(
+    val title: String,
+    val amountText: String,
+    val supportingText: String,
+    val totalBudgetMinor: Long,
+    val necessaryMinor: Long,
+    val optionalMinor: Long = 0L,
+    val avoidMinor: Long = 0L,
+    val centerLabel: String,
+    val isOverBudget: Boolean = false,
+    val necessaryColor: Color = NecessaryGreen,
+    val optionalColor: Color = OptionalAmber,
+    val avoidColor: Color = AvoidRed,
+    val legendLines: List<MetricLegendLine> = emptyList()
+)
+
+data class MetricLegendLine(
+    val label: String,
+    val value: String,
+    val color: Color
+)
+
+private fun dashboardMetrics(uiState: FinanceUiState): List<DashboardMetric> {
+    val currency = uiState.data.profile.currency
+    val metrics = mutableListOf<DashboardMetric>()
+    savingsMetric(uiState)?.let(metrics::add)
+    debtMetric(uiState)?.let(metrics::add)
+    metrics += uiState.dashboard.categorySpendingBreakdowns
+        .filter { breakdown ->
+            breakdown.category.type != CategoryType.SAVINGS &&
+                breakdown.category.type != CategoryType.DEBT &&
+                (breakdown.budgetMinor > 0L || breakdown.spentMinor > 0L)
+        }
+        .sortedWith(compareBy<CategorySpendingBreakdown> { categoryPriority(it.category.id, it.category.name) }.thenBy { it.category.name })
+        .take(8)
+        .map { breakdown ->
+            val budgetText = formatMoney(breakdown.budget, currency)
+            DashboardMetric(
+                title = breakdown.category.name.displayCategoryName(),
+                amountText = formatMoney(breakdown.spent, currency),
+                supportingText = if (breakdown.budgetMinor > 0L) {
+                    if (breakdown.isOverspent) {
+                        "${formatMoney(breakdown.overBudgetAmount, currency)} over budget"
+                    } else {
+                        "of $budgetText budget"
+                    }
+                } else {
+                    "No monthly budget"
+                },
+                totalBudgetMinor = breakdown.budgetMinor,
+                necessaryMinor = breakdown.necessaryMinor,
+                optionalMinor = breakdown.optionalMinor,
+                avoidMinor = breakdown.avoidMinor,
+                centerLabel = if (breakdown.budgetMinor > 0L) formatProgress(breakdown.visualProgress) else "--",
+                isOverBudget = breakdown.isOverspent,
+                legendLines = listOf(
+                    MetricLegendLine("Necessary", formatMoney(breakdown.necessarySpent, currency), NecessaryGreen),
+                    MetricLegendLine("Optional", formatMoney(breakdown.optionalSpent, currency), OptionalAmber),
+                    MetricLegendLine("Avoid", formatMoney(breakdown.avoidSpent, currency), AvoidRed)
+                )
+            )
+        }
+    if (metrics.isEmpty()) {
+        metrics += DashboardMetric(
+            title = "Budgets",
+            amountText = formatMoney(uiState.dashboard.totalSpent, currency),
+            supportingText = "Add category budgets to fill the grid",
+            totalBudgetMinor = 0L,
+            necessaryMinor = 0L,
+            centerLabel = "--"
+        )
+    }
+    return metrics
+}
+
+private fun savingsMetric(uiState: FinanceUiState): DashboardMetric? {
+    val status = uiState.data.latestSavingsBalanceStatus
+    val goal = uiState.data.primaryGoal
+    val currency = status?.currency ?: uiState.data.profile.currency
+    val target = goal?.targetAmount?.takeIf { it > 0.0 } ?: return status?.let {
+        DashboardMetric(
+            title = "Savings",
+            amountText = formatMoneyMinor(it.amountMinor, it.currency),
+            supportingText = "No goal target set",
+            totalBudgetMinor = 0L,
+            necessaryMinor = 0L,
+            centerLabel = "--"
+        )
+    }
+    val savingsBalanceText = status?.let { "Balance ${formatMoneyMinor(it.amountMinor, it.currency)}" }
+    val saved = goal.savedAmount
+    val progress = saved / target
+    val targetMinor = effectiveMinorUnits(goal.targetAmountMinor, goal.targetAmount)
+    val savedMinor = effectiveMinorUnits(goal.savedAmountMinor, goal.savedAmount)
+    val remaining = max(0.0, target - saved)
+    val requiredMonthly = uiState.dashboard.disciplineStatus.januaryCountdown.requiredMonthlySavings
+    val targetDateText = goal.targetDate.takeIf { it.isNotBlank() }?.let { "by $it" } ?: "target"
+    return DashboardMetric(
+        title = "Savings",
+        amountText = formatMoney(saved, currency),
+        supportingText = when {
+            progress >= 1.0 -> "Target completed"
+            savingsBalanceText != null -> "$savingsBalanceText; ${formatMoney(remaining, currency)} left"
+            requiredMonthly > 0.0 -> "Need ${formatMoney(requiredMonthly, currency)}/month"
+            else -> "${formatMoney(remaining, currency)} left"
+        },
+        totalBudgetMinor = targetMinor,
+        necessaryMinor = savedMinor.coerceAtMost(targetMinor),
+        centerLabel = formatProgress(progress),
+        necessaryColor = SavingsGreen,
+        optionalColor = SavingsGreen,
+        avoidColor = SavingsGreen,
+        legendLines = listOfNotNull(
+            MetricLegendLine("Target", "${formatMoney(target, currency)} $targetDateText", SavingsGreen),
+            savingsPaceLine(progress, requiredMonthly, uiState.data.profile.monthlySavingsTarget, currency)
+        )
+    )
+}
+
+private fun debtMetric(uiState: FinanceUiState): DashboardMetric? {
+    val debt = uiState.data.debt
+    val currency = uiState.data.profile.currency
+    if (debt.startingAmount <= 0.0 && debt.startingAmountMinor <= 0L) return null
+    val starting = minorUnitsToMajor(effectiveMinorUnits(debt.startingAmountMinor, debt.startingAmount))
+    val remaining = minorUnitsToMajor(effectiveMinorUnits(debt.remainingAmountMinor, debt.remainingAmount))
+    val paid = max(0.0, starting - remaining)
+    val progress = if (starting > 0.0) paid / starting else null
+    val startingMinor = effectiveMinorUnits(debt.startingAmountMinor, debt.startingAmount)
+    val paidMinor = max(0L, startingMinor - effectiveMinorUnits(debt.remainingAmountMinor, debt.remainingAmount))
+    return DashboardMetric(
+        title = "Debt",
+        amountText = formatMoney(remaining, currency),
+        supportingText = "remaining from ${formatMoney(starting, currency)}",
+        totalBudgetMinor = startingMinor,
+        necessaryMinor = paidMinor,
+        centerLabel = progress?.let { formatProgress(it) } ?: "--",
+        necessaryColor = Coral,
+        optionalColor = Coral,
+        avoidColor = Coral,
+        legendLines = listOf(
+            MetricLegendLine("Paid", formatMoney(paid, currency), Coral)
+        )
+    )
+}
+
+private fun savingsPaceLine(
+    progress: Double,
+    requiredMonthly: Double,
+    currentMonthlyTarget: Double,
+    currency: String
+): MetricLegendLine {
+    val label = when {
+        progress >= 1.0 -> "Complete"
+        currentMonthlyTarget > 0.0 && requiredMonthly < currentMonthlyTarget -> "Ahead"
+        else -> "Required"
+    }
+    val value = when (label) {
+        "Complete" -> "done"
+        "Ahead" -> "of schedule"
+        else -> "${formatMoney(requiredMonthly, currency)}/mo"
+    }
+    return MetricLegendLine(label, value, SavingsGreen)
+}
+
+private fun categoryPriority(id: String, name: String): Int {
+    val key = "${id.lowercase()} ${name.lowercase()}"
+    return when {
+        FinanceDefaults.FOOD_TRANSPORT_CATEGORY_ID in key || "food" in key || "transport" in key -> 0
+        "subscription" in key -> 1
+        "family" in key -> 2
+        "bill" in key || "rent" in key || "phone" in key || "internet" in key -> 3
+        "medical" in key -> 4
+        "clothing" in key || "shopping" in key -> 5
+        else -> 10
+    }
+}
+
+private fun String.displayCategoryName(): String =
+    when {
+        equals("Food/transport", ignoreCase = true) -> "Food/Transportation"
+        equals("Family", ignoreCase = true) -> "Family Support"
+        else -> this
+    }
+
+private fun com.musab.niqdah.domain.finance.UserProfile.displayName(userEmail: String?): String {
+    val localPart = userEmail
+        ?.substringBefore("@")
+        ?.replace('.', ' ')
+        ?.replace('_', ' ')
+        ?.trim()
+        .orEmpty()
+    return localPart
+        .takeIf { it.isNotBlank() }
+        ?.split(" ")
+        ?.joinToString(" ") { part -> part.replaceFirstChar { char -> char.titlecase() } }
+        ?: "Niqdah"
+}
 
 private fun FinanceUiState.shouldShowSalaryReminder(): Boolean {
     if (data.profile.salary <= 0.0 && data.profile.salaryMinor <= 0L) return false
@@ -219,199 +711,76 @@ private fun FinanceUiState.shouldShowSalaryReminder(): Boolean {
     }
 }
 
-@Composable
-private fun DailyUseBalanceProgressCard(uiState: FinanceUiState) {
-    val status = uiState.data.latestDailyUseBalanceStatus
-    val currency = status?.currency ?: uiState.data.profile.currency
-    val safePool = uiState.dashboard.remainingSafeToSpend.coerceAtLeast(0.0)
-    val balance = status?.let { minorUnitsToMajor(it.amountMinor) }
-    val progress = if (balance != null && safePool > 0.0) balance / safePool else null
-    val progressLabel = progress?.let { formatProgress(it) } ?: "N/A"
-    val supportLines = when {
-        status == null -> listOf("Confirm with bank SMS or manual balance update.")
-        safePool > 0.0 && progress != null -> listOf(
-            "${formatProgress(progress)} of safe spending available.",
-            "${formatMoney(safePool, currency)} remaining from monthly spendable pool."
-        )
-        else -> listOf(
-            "Safe spending pool is not available yet.",
-            "Confirm income, savings target, and current balance to activate the ring."
-        )
-    } + status.lastUpdatedLine()
-
-    BalanceProgressCard(
-        title = "Daily-use balance",
-        amountText = status?.let { formatMoneyMinor(it.amountMinor, it.currency) } ?: "Balance not confirmed yet",
-        progress = progress,
-        progressLabel = progressLabel,
-        statusText = status.statusLabel(),
-        supportingLines = supportLines,
-        actionText = "View ledger",
-        icon = Icons.Rounded.AccountBalanceWallet,
-        isWarning = status?.confidence != AccountBalanceConfidence.CONFIRMED
-    )
-}
-
-@Composable
-private fun SavingsBalanceProgressCard(uiState: FinanceUiState) {
-    val status = uiState.data.latestSavingsBalanceStatus
-    val primaryGoal = uiState.data.primaryGoal
-    val currency = status?.currency ?: uiState.data.profile.currency
-    val target = primaryGoal?.targetAmount?.takeIf { it > 0.0 }
-    val goalSaved = primaryGoal?.savedAmount ?: 0.0
-    val savingsBalance = status?.let { minorUnitsToMajor(it.amountMinor) }
-    val progressNumerator = savingsBalance ?: goalSaved.takeIf { it > 0.0 }
-    val progress = if (progressNumerator != null && target != null) progressNumerator / target else null
-    val goalProgress = if (target != null) goalSaved / target else null
-    val supportLines = buildList {
-        when {
-            status == null -> add("Confirm with bank SMS or manual balance update.")
-            target != null -> add("${formatMoney(savingsBalance ?: 0.0, currency)} actual savings balance against ${formatMoney(target, currency)} target.")
-            else -> add("Set a primary goal target to activate the savings ring.")
-        }
-        if (target != null) {
-            add("Goal contributions: ${formatMoney(goalSaved, currency)} of ${formatMoney(target, currency)} saved (${formatProgress(goalProgress ?: 0.0)}).")
-        }
-        val countdown = uiState.dashboard.disciplineStatus.januaryCountdown
-        if (target != null && countdown.daysRemaining >= 0) {
-            add("${countdown.daysRemaining} days left in the current target countdown.")
-        }
-        addAll(status.lastUpdatedLine())
-    }
-
-    BalanceProgressCard(
-        title = "Savings balance",
-        amountText = status?.let { formatMoneyMinor(it.amountMinor, it.currency) } ?: "Balance not confirmed yet",
-        progress = progress,
-        progressLabel = progress?.let { formatProgress(it) } ?: "N/A",
-        statusText = status.statusLabel(),
-        supportingLines = supportLines,
-        actionText = "View goal",
-        icon = Icons.Rounded.Savings,
-        isWarning = status?.confidence != AccountBalanceConfidence.CONFIRMED
-    )
-}
-
-private fun AccountBalanceStatus?.statusLabel(): String =
-    this?.confidence?.label ?: AccountBalanceConfidence.NEEDS_REVIEW.label
-
 private fun AccountBalanceStatus?.lastUpdatedLine(): List<String> =
     this?.takeIf { it.lastUpdatedMillis > 0L }?.let {
-        listOf("Last updated ${formatTransactionDateTime(it.lastUpdatedMillis)} from ${it.source.label}.")
+        listOf("Updated ${formatTransactionDateTime(it.lastUpdatedMillis)} from ${it.source.label}.")
     } ?: emptyList()
 
 @Composable
-private fun DisciplineCard(
-    disciplineStatus: DisciplineStatus,
-    currency: String
-) {
-    PremiumCard {
-            Text(text = "Monthly discipline status", style = MaterialTheme.typography.titleMedium)
-            DisciplineLine(
-                label = "Savings target",
-                value = "${formatMoney(disciplineStatus.savingsTarget.savedThisMonth, currency)} of ${
-                    formatMoney(disciplineStatus.savingsTarget.targetAmount, currency)
-                }"
-            )
-            DisciplineLine(
-                label = "Shortfall",
-                value = formatMoney(disciplineStatus.savingsTarget.shortfall, currency)
-            )
-            DisciplineLine(
-                label = "Safe to spend",
-                value = formatMoney(disciplineStatus.safeToSpendAmount, currency)
-            )
-            DisciplineLine(
-                label = "Avoid this month",
-                value = formatMoney(disciplineStatus.avoidSpendingThisMonth, currency)
-            )
-            Text(
-                text = warningSummary(disciplineStatus.categoryWarnings),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Text(
-                text = dueSummary(disciplineStatus.necessaryItemsDueSoon),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyMedium
-            )
+private fun LightInsightCard(title: String, body: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White)
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(text = body, color = MutedBlueText, style = MaterialTheme.typography.bodyMedium)
+        }
     }
-}
-
-@Composable
-private fun GoalCountdownCard(
-    disciplineStatus: DisciplineStatus,
-    currency: String
-) {
-    val countdown = disciplineStatus.januaryCountdown
-    FinanceMetricCard(
-        title = "${countdown.goalName} countdown",
-        value = "${countdown.monthsRemaining} months / ${countdown.daysRemaining} days",
-        subtitle = "Saved ${formatMoney(countdown.currentSaved, currency)} of ${
-            formatMoney(countdown.targetAmount, currency)
-        }. Required monthly savings: ${formatMoney(countdown.requiredMonthlySavings, currency)}."
-    )
 }
 
 @Composable
 private fun RecentActivityCard(uiState: FinanceUiState) {
     val currency = uiState.data.profile.currency
+    val categoryById = uiState.data.categories.associateBy { it.id }
     val recent = (
-        uiState.data.transactions.map { "${formatMoney(it.amount, it.currency.ifBlank { currency })} - ${it.note.ifBlank { "Expense" }}" to it.occurredAtMillis } +
+        uiState.data.transactions.map {
+            val category = categoryById[it.categoryId]
+            val prefix = when (category?.type) {
+                CategoryType.SAVINGS -> "Saved"
+                CategoryType.DEBT -> "Debt paid"
+                else -> "Spent"
+            }
+            "$prefix ${formatMoney(it.amount, it.currency.ifBlank { currency })} - ${it.note.ifBlank { category?.name ?: "Activity" }}" to it.occurredAtMillis
+        } +
             uiState.data.incomeTransactions.map { "${formatMoney(it.amount, it.currency.ifBlank { currency })} - ${it.source.ifBlank { "Income" }}" to it.occurredAtMillis }
         )
         .sortedByDescending { it.second }
         .take(3)
-    if (recent.isEmpty()) {
-        EmptyStateCard(
-            title = "No recent activity",
-            body = "Manual expenses, reviewed SMS imports, and income records will appear here."
-        )
-        return
-    }
-    PremiumCard {
-        SectionHeader(title = "Recent activity")
-        recent.forEach { item ->
-            Text(text = item.first, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
+    if (recent.isEmpty()) return
+    LightInsightCard(
+        title = "Recent activity",
+        body = recent.joinToString(separator = "\n") { it.first }
+    )
 }
 
 @Composable
-private fun NecessaryRemindersCard(disciplineStatus: DisciplineStatus) {
-    if (disciplineStatus.necessaryItemsDueSoon.isEmpty()) {
-        EmptyStateCard(
-            title = "No necessary reminders due soon",
-            body = "Fixed costs and important reminders will show here when they are close."
-        )
-        return
-    }
-    PremiumCard {
-        SectionHeader(title = "Necessary reminders")
-        Text(
-            text = dueSummary(disciplineStatus.necessaryItemsDueSoon),
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-private fun DisciplineLine(label: String, value: String) {
-    Row(
+private fun OverspendingCard(title: String, amount: String) {
+    Card(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Top
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFE8E8))
     ) {
-        Text(
-            text = label,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.weight(0.45f)
-        )
-        Text(
-            text = value,
-            modifier = Modifier.weight(0.55f),
-            fontWeight = FontWeight.SemiBold
-        )
+        Row(
+            modifier = Modifier.padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Warning,
+                contentDescription = null,
+                tint = Coral
+            )
+            Text(
+                text = "$title is over budget by $amount.",
+                color = CardNavy,
+                style = MaterialTheme.typography.bodyLarge
+            )
+        }
     }
 }
 
@@ -436,39 +805,11 @@ private fun dueSummary(items: List<NecessaryItemDue>): String =
         }
     }
 
-@Composable
-private fun HealthSummaryCard(summary: String) {
-    PremiumCard(containerColor = MaterialTheme.colorScheme.primaryContainer) {
-        Text(
-            text = summary,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            style = MaterialTheme.typography.bodyLarge
-        )
-    }
-}
-
-@Composable
-private fun OverspendingCard(title: String, amount: String) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Warning,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onTertiaryContainer
-            )
-            Text(
-                text = "$title is over budget by $amount.",
-                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                style = MaterialTheme.typography.bodyLarge
-            )
-        }
-    }
-}
+@Suppress("unused")
+private fun disciplineSummary(disciplineStatus: DisciplineStatus, currency: String): String =
+    listOf(
+        "Savings ${formatMoney(disciplineStatus.savingsTarget.savedThisMonth, currency)} of ${formatMoney(disciplineStatus.savingsTarget.targetAmount, currency)}",
+        "Safe to spend ${formatMoney(disciplineStatus.safeToSpendAmount, currency)}",
+        warningSummary(disciplineStatus.categoryWarnings),
+        dueSummary(disciplineStatus.necessaryItemsDueSoon)
+    ).joinToString(separator = "\n")

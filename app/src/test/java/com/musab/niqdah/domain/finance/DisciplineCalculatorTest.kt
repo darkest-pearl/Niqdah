@@ -99,6 +99,59 @@ class DisciplineCalculatorTest {
     }
 
     @Test
+    fun extraSavingsReducesRequiredFutureMonthlyAmountWithoutOverBudgetPenalty() {
+        val countdown = DisciplineCalculator.januaryCountdown(
+            targetDateInput = "2027-01-01",
+            currentSaved = 3_000.0,
+            targetAmount = 16_000.0,
+            today = LocalDate.parse("2026-06-01")
+        )
+        val savingsTarget = DisciplineCalculator.savingsTargetStatus(
+            data = FinanceData.empty(uid = "uid").copy(
+                profile = FinanceDefaults.userProfile(uid = "uid", now = 0L).copy(
+                    monthlySavingsTarget = 1_700.0,
+                    onboardingCompleted = true
+                ),
+                categories = listOf(
+                    BudgetCategory(
+                        id = FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID,
+                        name = "Savings goal",
+                        monthlyBudget = 1_700.0,
+                        type = CategoryType.SAVINGS
+                    )
+                ),
+                transactions = listOf(
+                    ExpenseTransaction(
+                        id = "extra-savings",
+                        categoryId = FinanceDefaults.SAVINGS_GOAL_CATEGORY_ID,
+                        amount = 2_200.0,
+                        occurredAtMillis = FinanceDates.parseDateInput("2026-06-02") ?: error("Invalid date"),
+                        yearMonth = "2026-06"
+                    )
+                )
+            ),
+            yearMonth = "2026-06"
+        )
+
+        assertEquals(7L, countdown.monthsRemaining)
+        assertEquals(1_857.142, countdown.requiredMonthlySavings, 0.001)
+        assertEquals(0.0, savingsTarget.shortfall, 0.001)
+        assertEquals(1.0, savingsTarget.progress, 0.001)
+    }
+
+    @Test
+    fun completedTargetHasZeroRequiredMonthlySavings() {
+        val countdown = DisciplineCalculator.januaryCountdown(
+            targetDateInput = "2027-01-01",
+            currentSaved = 16_500.0,
+            targetAmount = 16_000.0,
+            today = LocalDate.parse("2026-06-01")
+        )
+
+        assertEquals(0.0, countdown.requiredMonthlySavings, 0.001)
+    }
+
+    @Test
     fun necessaryItemsDueDetectionIncludesPendingItemsDueSoonOnly() {
         val today = LocalDate.parse("2026-05-10")
         val oneTimeDue = FinanceDates.parseDateInput("2026-05-15") ?: error("Invalid test date")

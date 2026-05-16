@@ -839,6 +839,7 @@ class FirebaseFinanceRepository(
             "targetDate" to targetDate,
             "purpose" to purpose.name,
             "isPrimary" to isPrimary,
+            "isArchived" to isArchived,
             "createdAtMillis" to createdAtMillis,
             "updatedAtMillis" to updatedAtMillis
         )
@@ -1144,6 +1145,7 @@ class FirebaseFinanceRepository(
             targetDate = getString("targetDate") ?: "",
             purpose = goalPurpose(getString("purpose")),
             isPrimary = getBoolean("isPrimary") ?: false,
+            isArchived = getBoolean("isArchived") ?: false,
             createdAtMillis = long("createdAtMillis"),
             updatedAtMillis = long("updatedAtMillis"),
             targetAmountMinor = long("targetAmountMinor", majorToMinorUnits(double("targetAmount"))),

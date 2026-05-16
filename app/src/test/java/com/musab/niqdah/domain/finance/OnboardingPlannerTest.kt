@@ -137,6 +137,63 @@ class OnboardingPlannerTest {
     }
 
     @Test
+    fun onboardingWithMarriageGoalCreatesOnlyThatGoal() {
+        val plan = OnboardingPlanner.buildPlan(
+            uid = "uid",
+            state = sampleState().copy(
+                primarySavingsGoal = PrimarySavingsGoal(
+                    name = "Marriage savings",
+                    purpose = GoalPurpose.MARRIAGE_FAMILY,
+                    targetAmount = 13_600.0,
+                    targetDate = "2027-01-01"
+                )
+            ),
+            today = LocalDate.parse("2026-05-10")
+        )
+
+        assertEquals(1, plan.goals.size)
+        assertEquals("Marriage savings", plan.goals.single().name)
+        assertTrue(plan.goals.single().isPrimary)
+        assertFalse(plan.goals.any { it.name.equals("Savings plan", ignoreCase = true) })
+    }
+
+    @Test
+    fun duplicateEmptyGenericSavingsPlanIsHiddenButContributedGoalsArePreserved() {
+        val data = FinanceData.empty(uid = "uid").copy(
+            profile = FinanceDefaults.userProfile(uid = "uid", now = 0L).copy(
+                primaryGoalId = "marriage",
+                onboardingCompleted = true
+            ),
+            goals = listOf(
+                SavingsGoal(
+                    id = "generic-empty",
+                    name = "Savings plan",
+                    targetAmount = 4_000.0,
+                    savedAmount = 0.0
+                ),
+                SavingsGoal(
+                    id = "generic-contributed",
+                    name = "Savings plan",
+                    targetAmount = 4_000.0,
+                    savedAmount = 500.0
+                ),
+                SavingsGoal(
+                    id = "marriage",
+                    name = "Marriage savings",
+                    targetAmount = 13_600.0,
+                    savedAmount = 1_200.0,
+                    isPrimary = true
+                )
+            )
+        )
+
+        assertEquals("Marriage savings", data.primaryGoal?.name)
+        assertFalse(data.visibleGoals.any { it.id == "generic-empty" })
+        assertTrue(data.visibleGoals.any { it.id == "generic-contributed" })
+        assertTrue(data.visibleGoals.any { it.id == "marriage" })
+    }
+
+    @Test
     fun existingUserDataTriggersMigrationPreservation() {
         val data = FinanceData.empty(uid = "uid").copy(
             profile = FinanceDefaults.userProfile(uid = "uid", now = 0L).copy(onboardingCompleted = false),

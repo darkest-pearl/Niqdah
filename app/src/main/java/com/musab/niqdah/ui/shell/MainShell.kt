@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -52,6 +53,9 @@ private enum class ShellDestination(
     Settings("Settings", Icons.Rounded.Settings)
 }
 
+private val NavCoral = Color(0xFFFF5A5F)
+private val NavMuted = Color(0xFF657084)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainShell(
@@ -74,12 +78,14 @@ fun MainShell(
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
-            PremiumTopBar(title = "Niqdah")
+            if (selectedDestination != ShellDestination.Dashboard) {
+                PremiumTopBar(title = "Niqdah")
+            }
         },
         bottomBar = {
             NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 6.dp
+                containerColor = Color.White,
+                tonalElevation = 0.dp
             ) {
                 ShellDestination.entries.forEach { destination ->
                     NavigationBarItem(
@@ -99,11 +105,11 @@ fun MainShell(
                             )
                         },
                         colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                            selectedIconColor = NavCoral,
+                            selectedTextColor = NavCoral,
+                            indicatorColor = Color(0xFFFFECEC),
+                            unselectedIconColor = NavMuted,
+                            unselectedTextColor = NavMuted
                         )
                     )
                 }
@@ -114,7 +120,8 @@ fun MainShell(
             ShellDestination.Dashboard -> DashboardScreen(
                 uiState = financeUiState,
                 padding = padding,
-                onClearError = financeViewModel::clearError
+                onClearError = financeViewModel::clearError,
+                userEmail = userEmail
             )
             ShellDestination.Transactions -> TransactionsScreen(
                 uiState = financeUiState,
