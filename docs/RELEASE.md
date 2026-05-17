@@ -1,40 +1,49 @@
 # Niqdah Release APK Notes
 
-This is for a personal APK, not Play Store submission.
+This is for real-device personal APK testing, not Play Store submission.
 
-## Build A Debug APK
+## Signing Inputs
 
-```powershell
-.\gradlew.bat :app:assembleDebug
-```
-
-Debug APK output:
+Release signing is local-only. The Android build reads these from either the current Windows PowerShell session or local Gradle properties:
 
 ```text
-app/build/outputs/apk/debug/app-debug.apk
+NIQDAH_KEYSTORE_FILE
+NIQDAH_KEYSTORE_PASSWORD
+NIQDAH_KEY_ALIAS
+NIQDAH_KEY_PASSWORD
 ```
 
-## Create A Release Keystore Locally
+Older `NIQDAH_RELEASE_*` names are still accepted for compatibility. Do not commit keystores, passwords, local signing property files, `google-services.json`, or copied APKs.
 
-Do not create the keystore inside the repository. Store it in a private location such as:
+If all four signing values are present, `:app:assembleRelease` produces an installable signed release APK. If any value is missing, the release build can still produce an unsigned APK for inspection, but Android will not normally install an unsigned release APK.
 
-```text
-C:\Users\Administrator\Documents\Niqdah-private\niqdah-release.jks
-```
+## Generate A Keystore
 
-Create it with:
+Store the keystore outside the repository:
 
 ```powershell
-keytool -genkeypair -v -keystore C:\Users\Administrator\Documents\Niqdah-private\niqdah-release.jks -alias niqdah -keyalg RSA -keysize 2048 -validity 10000
+New-Item -ItemType Directory -Force "$env:USERPROFILE\Documents\Niqdah-private"
+keytool -genkeypair -v -keystore "$env:USERPROFILE\Documents\Niqdah-private\niqdah-release.jks" -alias niqdah -keyalg RSA -keysize 2048 -validity 10000
 ```
 
-Keep the keystore and passwords in a password manager or other private backup. Losing the keystore means future signed updates may not install over the old APK.
+Keep the keystore and passwords in a password manager. Losing this keystore means future signed updates cannot install over APKs signed with it.
 
-## Configure Signing Without Committing Secrets
+## Set Signing Variables For This PowerShell Session
 
-Use user-level Gradle properties or environment variables. Do not commit passwords, keystores, `.jks`, `.keystore`, `.p12`, or local signing property files.
+```powershell
+$env:NIQDAH_KEYSTORE_FILE="$env:USERPROFILE\Documents\Niqdah-private\niqdah-release.jks"
+$env:NIQDAH_KEYSTORE_PASSWORD="your-store-password"
+$env:NIQDAH_KEY_ALIAS="niqdah"
+$env:NIQDAH_KEY_PASSWORD="your-key-password"
+```
 
-Example local-only properties in `%USERPROFILE%\.gradle\gradle.properties`:
+Alternative local-only storage:
+
+```powershell
+notepad "$env:USERPROFILE\.gradle\gradle.properties"
+```
+
+Add:
 
 ```properties
 NIQDAH_KEYSTORE_FILE=C:\\Users\\Administrator\\Documents\\Niqdah-private\\niqdah-release.jks
@@ -43,60 +52,74 @@ NIQDAH_KEY_ALIAS=niqdah
 NIQDAH_KEY_PASSWORD=your-key-password
 ```
 
-Environment variable names are the same if you prefer setting them in PowerShell. Older `NIQDAH_RELEASE_*` names are still accepted for local compatibility.
+## Build APKs
 
-If signing is not configured, Gradle can still prepare an unsigned release APK for inspection, but that unsigned release APK cannot be installed normally on a phone.
+Debug APK:
 
-## Build A Release APK
+```powershell
+.\gradlew.bat :app:assembleDebug
+```
+
+Debug output:
+
+```text
+app\build\outputs\apk\debug\app-debug.apk
+```
+
+Signed release APK:
 
 ```powershell
 .\gradlew.bat :app:assembleRelease
 ```
 
-Release APK output:
+Release output:
 
 ```text
-app/build/outputs/apk/release/
+app\build\outputs\apk\release\app-release.apk
 ```
 
-When signing variables are present, the installable APK is usually:
+If signing variables are missing, inspect:
 
 ```text
-app/build/outputs/apk/release/app-release.apk
+app\build\outputs\apk\release\app-release-unsigned.apk
 ```
 
-When signing variables are missing, Gradle may produce an unsigned artifact such as:
+That unsigned APK is not normally installable on a phone.
 
-```text
-app/build/outputs/apk/release/app-release-unsigned.apk
-```
+## Install On A Device
 
-Use that unsigned APK only for inspection.
-
-## Install On Phone
-
-1. Enable installation from trusted local sources on the phone if needed.
-2. Connect the phone with USB debugging enabled.
-3. Install with:
+Enable USB debugging and authorize the computer on the phone, then verify:
 
 ```powershell
-adb install -r app\build\outputs\apk\debug\app-debug.apk
+adb devices
 ```
 
-For a signed release APK:
+Install signed release:
 
 ```powershell
 adb install -r app\build\outputs\apk\release\app-release.apk
 ```
 
-If Android reports the APK is unsigned, confirm the four `NIQDAH_KEY*` values are set in `%USERPROFILE%\.gradle\gradle.properties` or in the current PowerShell session, then rebuild.
+If Android reports a signature mismatch because the debug APK is already installed:
+
+```powershell
+adb uninstall com.musab.niqdah
+adb install app\build\outputs\apk\release\app-release.apk
+```
+
+Uninstalling removes local app data. Confirm Firebase sync or use a test account before doing it.
 
 ## Rollback
 
-Keep the last known-good APK in a private folder outside the repo. To roll back:
+Keep known-good APKs in a private folder outside the repo. To install one:
 
 ```powershell
-adb install -r path\to\last-known-good.apk
+adb install -r C:\path\to\last-known-good.apk
 ```
 
-If Android refuses to downgrade because of `versionCode`, uninstall first, then install the old APK. Uninstalling can remove local app data, so confirm Firebase sync before doing that.
+If Android refuses to downgrade because of `versionCode`, uninstall first:
+
+```powershell
+adb uninstall com.musab.niqdah
+adb install C:\path\to\last-known-good.apk
+```

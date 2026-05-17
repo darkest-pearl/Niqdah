@@ -60,6 +60,7 @@ private val NavMuted = Color(0xFF657084)
 @Composable
 fun MainShell(
     userEmail: String?,
+    userUid: String,
     financeUiState: FinanceUiState,
     financeViewModel: FinanceViewModel,
     aiChatUiState: AiChatUiState,
@@ -171,6 +172,8 @@ fun MainShell(
             ShellDestination.Settings -> SettingsScreen(
                 uiState = financeUiState,
                 userEmail = userEmail,
+                userUid = userUid,
+                aiHealthStatus = aiHealthStatus(aiChatUiState),
                 padding = padding,
                 onUpdateProfileAndDebt = financeViewModel::updateProfileAndDebt,
                 onUpdateCategoryBudgets = financeViewModel::updateCategoryBudgets,
@@ -203,3 +206,11 @@ fun MainShell(
         }
     }
 }
+
+private fun aiHealthStatus(uiState: AiChatUiState): String =
+    when {
+        uiState.isSending -> "Request in progress"
+        uiState.errorMessage != null -> "Last error: ${uiState.errorMessage}"
+        uiState.messages.size > 1 -> "Last response received"
+        else -> "Not checked this session"
+    }

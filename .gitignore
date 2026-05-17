@@ -22,8 +22,13 @@ functions/lib/
 *.x509.pem
 keystore.properties
 release-signing.properties
+local-signing.properties
+signing.properties
+*signing*.properties
 Niqdah-private/
 .android-signing/
+/*.apk
+/*.apks
 
 # OS files
 .DS_Store

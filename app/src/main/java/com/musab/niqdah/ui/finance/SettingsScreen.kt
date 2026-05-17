@@ -1,8 +1,11 @@
 package com.musab.niqdah.ui.finance
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
+import android.provider.Settings
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -25,6 +28,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.HealthAndSafety
 import androidx.compose.material.icons.rounded.RadioButtonUnchecked
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -55,6 +59,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.musab.niqdah.BuildConfig
 import com.musab.niqdah.domain.finance.AccountBalanceStatus
 import com.musab.niqdah.domain.finance.BudgetCategory
 import com.musab.niqdah.domain.finance.BankMessageParserSettings
@@ -71,13 +76,16 @@ private enum class SettingsPage(val title: String, val subtitle: String) {
     CATEGORIES("Categories & Budgets", "Budget categories, merchant rules, and necessary items."),
     REMINDERS("Reminders & Discipline", "Savings, debt, overspending, and goal countdown reminders."),
     PRIVACY("Privacy & Security", "What Niqdah reads, stores, and sends to AI."),
-    APP("App & Release", "Account, version, build, and release notes.")
+    APP("App & Release", "Account, version, build, and release notes."),
+    QA("QA Diagnostics", "Release readiness, permissions, parser state, balances, and AI health.")
 }
 
 @Composable
 fun SettingsScreen(
     uiState: FinanceUiState,
     userEmail: String?,
+    userUid: String,
+    aiHealthStatus: String,
     padding: PaddingValues,
     onUpdateProfileAndDebt: (String, String, String, String, String, String) -> Unit,
     onUpdateCategoryBudgets: (Map<String, String>) -> Unit,
@@ -149,6 +157,16 @@ fun SettingsScreen(
         } else {
             isAutomaticSmsImportEnabled = granted
         }
+    }
+    val openNotificationSettings: () -> Unit = {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.parse("package:${context.packageName}"))
+        }
+        runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }
 
     LaunchedEffect(profile, debt) {
@@ -338,6 +356,15 @@ fun SettingsScreen(
                         lastDuplicateReason = uiState.data.bankMessageSettings.lastDuplicateReason,
                         lastParserDecisionAtMillis = uiState.data.bankMessageSettings.lastParserDecisionAtMillis,
                         lastParsedBankMessageAtMillis = uiState.data.bankMessageSettings.lastParsedBankMessageAtMillis,
+                        onRequestSmsPermission = { smsPermissionLauncher.launch(Manifest.permission.RECEIVE_SMS) },
+                        onRequestNotificationPermission = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                isNotificationPermissionGranted = true
+                            }
+                        },
+                        onOpenNotificationSettings = openNotificationSettings,
                         dailySenderName = dailySenderName,
                         onDailySenderNameChange = { dailySenderName = it },
                         dailyUseAccountSuffix = dailyUseAccountSuffix,
@@ -505,6 +532,31 @@ fun SettingsScreen(
                         )
                     )
                 }
+                item {
+                    SettingsMenuCard(
+                        title = SettingsPage.QA.title,
+                        body = "Version, auth, permissions, SMS parser decisions, balances, salary cycle, and AI status.",
+                        onClick = { currentPage = SettingsPage.QA },
+                        trailingIcon = Icons.Rounded.HealthAndSafety
+                    )
+                }
+            }
+            SettingsPage.QA -> {
+                item {
+                    QaDiagnosticsCard(
+                        diagnostics = buildQaDiagnostics(
+                            appVersionName = BuildConfig.VERSION_NAME,
+                            appVersionCode = BuildConfig.VERSION_CODE,
+                            buildType = if (BuildConfig.DEBUG) "debug" else "release",
+                            firebaseAuthStatus = if (userUid.isBlank()) "Not signed in" else "Signed in",
+                            isUidPresent = userUid.isNotBlank(),
+                            isSmsPermissionGranted = isSmsPermissionGranted,
+                            isNotificationPermissionGranted = isNotificationPermissionGranted,
+                            aiHealthStatus = aiHealthStatus,
+                            data = uiState.data
+                        )
+                    )
+                }
             }
         }
     }
@@ -553,6 +605,40 @@ private fun balanceStatusText(status: AccountBalanceStatus?): String =
             formatTransactionDateTime(it.lastUpdatedMillis)
         }"
     } ?: "Not known"
+
+@Composable
+private fun QaDiagnosticsCard(diagnostics: QaDiagnostics) {
+    PremiumCard {
+        Text(text = "QA Diagnostics", style = MaterialTheme.typography.titleMedium)
+        Text(
+            text = "No raw SMS body, API key, password, or signing secret is shown here.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium
+        )
+        diagnostics.sections.forEach { section ->
+            Text(text = section.title, style = MaterialTheme.typography.titleSmall)
+            section.rows.forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Text(
+                        modifier = Modifier.weight(0.42f),
+                        text = row.label,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Text(
+                        modifier = Modifier.weight(0.58f),
+                        text = row.value,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun AccountCard(userEmail: String?, isSaving: Boolean, onLogout: () -> Unit) {
@@ -706,6 +792,9 @@ private fun BankMessageSourcesCard(
     lastDuplicateReason: String,
     lastParserDecisionAtMillis: Long,
     lastParsedBankMessageAtMillis: Long,
+    onRequestSmsPermission: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
     dailySenderName: String,
     onDailySenderNameChange: (String) -> Unit,
     dailyUseAccountSuffix: String,
@@ -750,6 +839,39 @@ private fun BankMessageSourcesCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium
             )
+            Text(text = "Permission recovery", style = MaterialTheme.typography.titleSmall)
+            listOf(
+                "If SMS import stops working, turn SMS permission off and on again.",
+                "Ensure automatic SMS import is enabled.",
+                "Ensure sender names match the bank SMS sender exactly.",
+                "Enable notification permission for review alerts."
+            ).forEach { line ->
+                Text(
+                    text = line,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = onRequestSmsPermission
+                ) {
+                    Text("Request SMS")
+                }
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = onRequestNotificationPermission
+                ) {
+                    Text("Request notifications")
+                }
+            }
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onOpenNotificationSettings
+            ) {
+                Text("Open app notification settings")
+            }
             SourceToggleRow(
                 title = "Enable automatic SMS import",
                 isEnabled = isAutomaticSmsImportEnabled,

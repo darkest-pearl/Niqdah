@@ -70,6 +70,29 @@ Run these against a fresh install and an existing account before sharing a perso
 - Confirm internal transfer safety notifications use transfer summaries only.
 - Confirm discipline reminders use user-friendly titles and stable behavior.
 
+## Real-Device Signed Release
+
+1. Fresh install the signed release APK.
+2. Login or register.
+3. Complete onboarding.
+4. Enable SMS import.
+5. Enable notifications.
+6. Configure real sender names.
+7. Configure account suffixes.
+8. Send or use real bank SMS if available.
+9. Test manual message import if real SMS is unavailable.
+10. Test salary deposit.
+11. Test expense import.
+12. Test internal transfer pair.
+13. Test informational SMS ignored.
+14. Test AI advice with no draft.
+15. Test AI `Log AED X` draft.
+16. Test post-salary savings reminder.
+17. Test notification Save/Edit/Dismiss.
+18. Test skip this month.
+19. Test dark mode.
+20. Test app restart after permissions are granted.
+
 ## Offline Or Poor Connection
 
 - Turn on airplane mode.

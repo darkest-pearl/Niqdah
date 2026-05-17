@@ -82,6 +82,7 @@ fun NiqdahApp(openTransactionsRequest: Int = 0) {
 
                 MainShell(
                     userEmail = authState.email,
+                    userUid = authState.uid,
                     financeUiState = financeUiState,
                     financeViewModel = financeViewModel,
                     aiChatUiState = aiChatUiState,
